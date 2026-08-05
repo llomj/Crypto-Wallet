@@ -21,7 +21,7 @@ type TokenStats = {
 const STORAGE_KEY = 'pulse-vault-private-wallets-v2';
 const GROUP_STORAGE_KEY = 'pulse-vault-wallet-groups-v1';
 const DEFAULT_GROUP_ID = 'my-wallet';
-const FEATURED_SYMBOLS = new Set(['PLS', 'WPLS', 'ETH', 'WETH', 'PLSX', 'HEX', 'INC', 'PRVX', 'PHX', 'HDRN', 'ICSA', 'PDI', 'ASIC', 'PDA', 'USDC']);
+const FEATURED_SYMBOLS = new Set(['PLS', 'WPLS', 'ETH', 'WETH', 'PLSX', 'HEX', 'pHEX', 'INC', 'PRVX', 'HDRN', 'ICSA', 'PDI', 'ASIC', 'PDA', 'USDC']);
 const HIDDEN_DUST_SYMBOLS = new Set(['FTVC', 'SCIVVE', 'SCIVVI', 'SCIVVII', 'SCIVV', 'HXY']);
 const WRAPPED_NATIVE: Record<Network, string> = {
   PulseChain: '0xA1077a294dDe1B09bB078844Df40758a5D0f9a27',
@@ -33,7 +33,7 @@ const CORE_ICONS: Record<string, string> = {
   PLSX: `${import.meta.env.BASE_URL}token-icons/plsx.png`,
   HEX: `${import.meta.env.BASE_URL}token-icons/hex.png`,
   INC: `${import.meta.env.BASE_URL}token-icons/inc.png`,
-  PHX: `${import.meta.env.BASE_URL}token-icons/phx.png`,
+  pHEX: `${import.meta.env.BASE_URL}token-icons/phex.png`,
   USDC: `${import.meta.env.BASE_URL}token-icons/usdc.png`,
   WETH: `${import.meta.env.BASE_URL}token-icons/weth.png`,
   HDRN: `${import.meta.env.BASE_URL}token-icons/hdrn.png`,
@@ -109,14 +109,14 @@ const TOKEN_DATA: Record<string, TokenInfo> = {
     color: '#10B981',
     borderGradient: 'linear-gradient(135deg, #10B981, #34D399)',
   },
-  PHX: {
-    symbol: 'PHX',
-    name: 'PulseX',
-    subtitle: 'PulseX Token',
-    contract: '0x95B303987A60C71504D99Aa1b13B4DA07b0790ab',
+  pHEX: {
+    symbol: 'pHEX',
+    name: 'HEX on PulseChain',
+    subtitle: 'Mining Protocol',
+    contract: '0x2B591e99afE9f32eAA6214f7B7629768c40Eeb39',
     network: 'PulseChain',
-    color: '#F59E0B',
-    borderGradient: 'linear-gradient(135deg, #F59E0B, #EF4444)',
+    color: '#FF6B35',
+    borderGradient: 'linear-gradient(135deg, #FF6B35, #F7931E, #FF2CA8)',
   },
 };
 
@@ -382,7 +382,7 @@ function App() {
           <div className="hero-title-row"><h1>Wallet portfolio.<br/><span>One private view.</span></h1></div>
           <p>Track your PulseChain and Ethereum wallets from one mobile-first, watch-only dashboard.</p>
           <div className="trust-row"><span><LockKeyhole size={15}/>No wallet connection</span><span><ShieldCheck size={15}/>No seed phrase</span><span className="trust-live"><Radio size={12}/>Live</span></div>
-          <div className="ecosystem-strip"><span>BUILT FOR THE ECOSYSTEM</span><div><b onClick={() => { setSelectedToken('ETH'); if (!tokenStats['ETH']) { setTokenStats(current => ({ ...current, 'ETH': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['ETH']).then(stats => setTokenStats(current => ({ ...current, 'ETH': stats }))); } }}>ETH</b><b onClick={() => { setSelectedToken('PLS'); if (!tokenStats['PLS']) { setTokenStats(current => ({ ...current, 'PLS': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['PLS']).then(stats => setTokenStats(current => ({ ...current, 'PLS': stats }))); } }}>PLS</b><b onClick={() => { setSelectedToken('HEX'); if (!tokenStats['HEX']) { setTokenStats(current => ({ ...current, 'HEX': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['HEX']).then(stats => setTokenStats(current => ({ ...current, 'HEX': stats }))); } }}>HEX</b><b onClick={() => { setSelectedToken('PLSX'); if (!tokenStats['PLSX']) { setTokenStats(current => ({ ...current, 'PLSX': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['PLSX']).then(stats => setTokenStats(current => ({ ...current, 'PLSX': stats }))); } }}>PLSX</b><b onClick={() => { setSelectedToken('PHX'); if (!tokenStats['PHX']) { setTokenStats(current => ({ ...current, 'PHX': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['PHX']).then(stats => setTokenStats(current => ({ ...current, 'PHX': stats }))); } }}>PHX</b><b onClick={() => { setSelectedToken('PRVX'); if (!tokenStats['PRVX']) { setTokenStats(current => ({ ...current, 'PRVX': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['PRVX']).then(stats => setTokenStats(current => ({ ...current, 'PRVX': stats }))); } }}>PRVX</b><b onClick={() => { setSelectedToken('INC'); if (!tokenStats['INC']) { setTokenStats(current => ({ ...current, 'INC': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['INC']).then(stats => setTokenStats(current => ({ ...current, 'INC': stats }))); } }}>INC</b></div></div>
+          <div className="ecosystem-strip"><span>BUILT FOR THE ECOSYSTEM</span><div><b onClick={() => { setSelectedToken('ETH'); if (!tokenStats['ETH']) { setTokenStats(current => ({ ...current, 'ETH': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['ETH']).then(stats => setTokenStats(current => ({ ...current, 'ETH': stats }))); } }}>ETH</b><b onClick={() => { setSelectedToken('PLS'); if (!tokenStats['PLS']) { setTokenStats(current => ({ ...current, 'PLS': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['PLS']).then(stats => setTokenStats(current => ({ ...current, 'PLS': stats }))); } }}>PLS</b><b onClick={() => { setSelectedToken('HEX'); if (!tokenStats['HEX']) { setTokenStats(current => ({ ...current, 'HEX': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['HEX']).then(stats => setTokenStats(current => ({ ...current, 'HEX': stats }))); } }}>HEX</b><b onClick={() => { setSelectedToken('pHEX'); if (!tokenStats['pHEX']) { setTokenStats(current => ({ ...current, 'pHEX': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['pHEX']).then(stats => setTokenStats(current => ({ ...current, 'pHEX': stats }))); } }}>pHEX</b><b onClick={() => { setSelectedToken('PLSX'); if (!tokenStats['PLSX']) { setTokenStats(current => ({ ...current, 'PLSX': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['PLSX']).then(stats => setTokenStats(current => ({ ...current, 'PLSX': stats }))); } }}>PLSX</b><b onClick={() => { setSelectedToken('PRVX'); if (!tokenStats['PRVX']) { setTokenStats(current => ({ ...current, 'PRVX': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['PRVX']).then(stats => setTokenStats(current => ({ ...current, 'PRVX': stats }))); } }}>PRVX</b><b onClick={() => { setSelectedToken('INC'); if (!tokenStats['INC']) { setTokenStats(current => ({ ...current, 'INC': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['INC']).then(stats => setTokenStats(current => ({ ...current, 'INC': stats }))); } }}>INC</b></div></div>
         </div>
 
         <form className={`address-panel ${addressFormOpen ? 'open' : 'collapsed'}`} onSubmit={addWallet}>
