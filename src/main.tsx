@@ -22,7 +22,7 @@ const STORAGE_KEY = 'pulse-vault-private-wallets-v2';
 const GROUP_STORAGE_KEY = 'pulse-vault-wallet-groups-v1';
 const DEFAULT_GROUP_ID = 'my-wallet';
 const FEATURED_SYMBOLS = new Set(['PLS', 'WPLS', 'ETH', 'WETH', 'PLSX', 'HEX', 'INC', 'PRVX', 'HDRN', 'ICSA', 'PDI', 'ASIC', 'PDA', 'USDC']);
-const HIDDEN_DUST_SYMBOLS = new Set(['FTVC', 'SCIVVE', 'SCIVVI', 'SCIVV', 'HXY']);
+const HIDDEN_DUST_SYMBOLS = new Set(['FTVC', 'SCIVVE', 'SCIVVI', 'SCIVVII', 'SCIVV', 'HXY']);
 const WRAPPED_NATIVE: Record<Network, string> = {
   PulseChain: '0xA1077a294dDe1B09bB078844Df40758a5D0f9a27',
   Ethereum: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
@@ -356,7 +356,8 @@ function App() {
   const filteredAssets = selectedPortfolio?.assets.filter(asset => {
     const symbol = tokenKey(asset.symbol);
     const name = tokenKey(asset.name);
-    if (HIDDEN_DUST_SYMBOLS.has(symbol) || [...HIDDEN_DUST_SYMBOLS].some(dust => name.includes(dust))) return false;
+    const isDust = HIDDEN_DUST_SYMBOLS.has(symbol) || [...HIDDEN_DUST_SYMBOLS].some(dust => symbol.includes(dust) || name.includes(dust));
+    if (isDust) return false;
     if (!hideDust) return true;
     return FEATURED_SYMBOLS.has(symbol) || (asset.value !== null && asset.value >= 0.01);
   }) ?? [];
