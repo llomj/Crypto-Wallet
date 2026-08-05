@@ -21,7 +21,7 @@ type TokenStats = {
 const STORAGE_KEY = 'pulse-vault-private-wallets-v2';
 const GROUP_STORAGE_KEY = 'pulse-vault-wallet-groups-v1';
 const DEFAULT_GROUP_ID = 'my-wallet';
-const FEATURED_SYMBOLS = new Set(['PLS', 'WPLS', 'ETH', 'WETH', 'PLSX', 'HEX', 'INC', 'PRVX', 'HDRN', 'ICSA', 'PDI', 'ASIC', 'PDA']);
+const FEATURED_SYMBOLS = new Set(['PLS', 'WPLS', 'ETH', 'WETH', 'PLSX', 'HEX', 'INC', 'PRVX', 'HDRN', 'ICSA', 'PDI', 'ASIC', 'PDA', 'USDC']);
 const HIDDEN_DUST_SYMBOLS = new Set(['FTVC', 'SCIVVE', 'SCIVVI', 'SCIVV', 'HXY']);
 const WRAPPED_NATIVE: Record<Network, string> = {
   PulseChain: '0xA1077a294dDe1B09bB078844Df40758a5D0f9a27',
@@ -33,6 +33,7 @@ const CORE_ICONS: Record<string, string> = {
   PLSX: `${import.meta.env.BASE_URL}token-icons/plsx.png`,
   HEX: `${import.meta.env.BASE_URL}token-icons/hex.png`,
   INC: `${import.meta.env.BASE_URL}token-icons/inc.png`,
+  USDC: `${import.meta.env.BASE_URL}token-icons/usdc.png`,
   WETH: `${import.meta.env.BASE_URL}token-icons/weth.png`,
   HDRN: `${import.meta.env.BASE_URL}token-icons/hdrn.png`,
   ICSA: `${import.meta.env.BASE_URL}token-icons/icsa.png`,
@@ -353,10 +354,10 @@ function App() {
   const knownValue = wallets.reduce((total, wallet) => total + (portfolios[wallet.id]?.assets.reduce((walletTotal, asset) => walletTotal + (asset.value ?? 0), 0) ?? 0), 0);
   const selectedValue = selectedPortfolio?.assets.reduce((total, asset) => total + (asset.value ?? 0), 0) ?? 0;
   const filteredAssets = selectedPortfolio?.assets.filter(asset => {
-    if (!hideDust) return true;
     const symbol = tokenKey(asset.symbol);
     const name = tokenKey(asset.name);
     if (HIDDEN_DUST_SYMBOLS.has(symbol) || [...HIDDEN_DUST_SYMBOLS].some(dust => name.includes(dust))) return false;
+    if (!hideDust) return true;
     return FEATURED_SYMBOLS.has(symbol) || (asset.value !== null && asset.value >= 0.01);
   }) ?? [];
   const hiddenDustCount = (selectedPortfolio?.assets.length ?? 0) - filteredAssets.length;
