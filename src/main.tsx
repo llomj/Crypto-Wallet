@@ -21,7 +21,7 @@ type TokenStats = {
 const STORAGE_KEY = 'pulse-vault-private-wallets-v2';
 const GROUP_STORAGE_KEY = 'pulse-vault-wallet-groups-v1';
 const DEFAULT_GROUP_ID = 'my-wallet';
-const FEATURED_SYMBOLS = new Set(['PLS', 'WPLS', 'ETH', 'WETH', 'PLSX', 'HEX', 'INC', 'PRVX', 'HDRN', 'ICSA', 'PDI', 'ASIC', 'PDA', 'USDC']);
+const FEATURED_SYMBOLS = new Set(['PLS', 'WPLS', 'ETH', 'WETH', 'PLSX', 'HEX', 'INC', 'PRVX', 'PHX', 'HDRN', 'ICSA', 'PDI', 'ASIC', 'PDA', 'USDC']);
 const HIDDEN_DUST_SYMBOLS = new Set(['FTVC', 'SCIVVE', 'SCIVVI', 'SCIVVII', 'SCIVV', 'HXY']);
 const WRAPPED_NATIVE: Record<Network, string> = {
   PulseChain: '0xA1077a294dDe1B09bB078844Df40758a5D0f9a27',
@@ -33,6 +33,7 @@ const CORE_ICONS: Record<string, string> = {
   PLSX: `${import.meta.env.BASE_URL}token-icons/plsx.png`,
   HEX: `${import.meta.env.BASE_URL}token-icons/hex.png`,
   INC: `${import.meta.env.BASE_URL}token-icons/inc.png`,
+  PHX: `${import.meta.env.BASE_URL}token-icons/phx.png`,
   USDC: `${import.meta.env.BASE_URL}token-icons/usdc.png`,
   WETH: `${import.meta.env.BASE_URL}token-icons/weth.png`,
   HDRN: `${import.meta.env.BASE_URL}token-icons/hdrn.png`,
@@ -107,6 +108,15 @@ const TOKEN_DATA: Record<string, TokenInfo> = {
     network: 'PulseChain',
     color: '#10B981',
     borderGradient: 'linear-gradient(135deg, #10B981, #34D399)',
+  },
+  PHX: {
+    symbol: 'PHX',
+    name: 'PulseX',
+    subtitle: 'PulseX Token',
+    contract: '0x95B303987A60C71504D99Aa1b13B4DA07b0790ab',
+    network: 'PulseChain',
+    color: '#F59E0B',
+    borderGradient: 'linear-gradient(135deg, #F59E0B, #EF4444)',
   },
 };
 
@@ -372,7 +382,7 @@ function App() {
           <div className="hero-title-row"><h1>Wallet portfolio.<br/><span>One private view.</span></h1></div>
           <p>Track your PulseChain and Ethereum wallets from one mobile-first, watch-only dashboard.</p>
           <div className="trust-row"><span><LockKeyhole size={15}/>No wallet connection</span><span><ShieldCheck size={15}/>No seed phrase</span><span className="trust-live"><Radio size={12}/>Live</span></div>
-          <div className="ecosystem-strip"><span>BUILT FOR THE ECOSYSTEM</span><div><b onClick={() => { setSelectedToken('ETH'); if (!tokenStats['ETH']) { setTokenStats(current => ({ ...current, 'ETH': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['ETH']).then(stats => setTokenStats(current => ({ ...current, 'ETH': stats }))); } }}>ETH</b><b onClick={() => { setSelectedToken('PLS'); if (!tokenStats['PLS']) { setTokenStats(current => ({ ...current, 'PLS': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['PLS']).then(stats => setTokenStats(current => ({ ...current, 'PLS': stats }))); } }}>PLS</b><b onClick={() => { setSelectedToken('HEX'); if (!tokenStats['HEX']) { setTokenStats(current => ({ ...current, 'HEX': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['HEX']).then(stats => setTokenStats(current => ({ ...current, 'HEX': stats }))); } }}>HEX</b><b onClick={() => { setSelectedToken('PLSX'); if (!tokenStats['PLSX']) { setTokenStats(current => ({ ...current, 'PLSX': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['PLSX']).then(stats => setTokenStats(current => ({ ...current, 'PLSX': stats }))); } }}>PLSX</b><b onClick={() => { setSelectedToken('PRVX'); if (!tokenStats['PRVX']) { setTokenStats(current => ({ ...current, 'PRVX': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['PRVX']).then(stats => setTokenStats(current => ({ ...current, 'PRVX': stats }))); } }}>PRVX</b><b onClick={() => { setSelectedToken('INC'); if (!tokenStats['INC']) { setTokenStats(current => ({ ...current, 'INC': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['INC']).then(stats => setTokenStats(current => ({ ...current, 'INC': stats }))); } }}>INC</b></div></div>
+          <div className="ecosystem-strip"><span>BUILT FOR THE ECOSYSTEM</span><div><b onClick={() => { setSelectedToken('ETH'); if (!tokenStats['ETH']) { setTokenStats(current => ({ ...current, 'ETH': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['ETH']).then(stats => setTokenStats(current => ({ ...current, 'ETH': stats }))); } }}>ETH</b><b onClick={() => { setSelectedToken('PLS'); if (!tokenStats['PLS']) { setTokenStats(current => ({ ...current, 'PLS': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['PLS']).then(stats => setTokenStats(current => ({ ...current, 'PLS': stats }))); } }}>PLS</b><b onClick={() => { setSelectedToken('HEX'); if (!tokenStats['HEX']) { setTokenStats(current => ({ ...current, 'HEX': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['HEX']).then(stats => setTokenStats(current => ({ ...current, 'HEX': stats }))); } }}>HEX</b><b onClick={() => { setSelectedToken('PLSX'); if (!tokenStats['PLSX']) { setTokenStats(current => ({ ...current, 'PLSX': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['PLSX']).then(stats => setTokenStats(current => ({ ...current, 'PLSX': stats }))); } }}>PLSX</b><b onClick={() => { setSelectedToken('PHX'); if (!tokenStats['PHX']) { setTokenStats(current => ({ ...current, 'PHX': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['PHX']).then(stats => setTokenStats(current => ({ ...current, 'PHX': stats }))); } }}>PHX</b><b onClick={() => { setSelectedToken('PRVX'); if (!tokenStats['PRVX']) { setTokenStats(current => ({ ...current, 'PRVX': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['PRVX']).then(stats => setTokenStats(current => ({ ...current, 'PRVX': stats }))); } }}>PRVX</b><b onClick={() => { setSelectedToken('INC'); if (!tokenStats['INC']) { setTokenStats(current => ({ ...current, 'INC': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['INC']).then(stats => setTokenStats(current => ({ ...current, 'INC': stats }))); } }}>INC</b></div></div>
         </div>
 
         <form className={`address-panel ${addressFormOpen ? 'open' : 'collapsed'}`} onSubmit={addWallet}>
@@ -382,7 +392,7 @@ function App() {
             <p className="panel-note">Your address stays on this device. It is never added to our code or public GitHub.</p>
             <label className="field-label">Wallet name <span>optional</span><input value={label} onChange={e => setLabel(e.target.value)} placeholder="Give this wallet a private label" autoComplete="off"/></label>
             <label className="field-label">Public wallet address<div className={`address-input ${error ? 'invalid' : ''}`}><input aria-label="Public wallet address" value={address} onChange={e => {setAddress(e.target.value.trim()); setError('')}} placeholder="Paste the complete public address" autoCapitalize="off" autoCorrect="off" spellCheck={false}/></div>{error && <small className="error">{error}</small>}</label>
-            <label className="field-label">Add to wallet<select value={selectedGroupId} onChange={event => setSelectedGroupId(event.target.value)}>{walletGroups.map(group => <option value={group.id} key={group.id}>{group.name}</option>)}</select></label>
+            <label className="field-label">Add to wallet<div className="wallet-selector">{walletGroups.map(group => { const groupWallets = wallets.filter(w => (w.groupId ?? DEFAULT_GROUP_ID) === group.id); return <button type="button" key={group.id} className={`wallet-selector-item ${selectedGroupId === group.id ? 'selected' : ''}`} onClick={() => setSelectedGroupId(group.id)}><span className="wallet-selector-name">{group.name}</span><span className="wallet-selector-count">{groupWallets.length} {groupWallets.length === 1 ? 'wallet' : 'wallets'}</span></button>; })}</div></label>
             <fieldset><legend>Choose network</legend><div className="network-choice"><button type="button" className={network === 'PulseChain' ? 'active' : ''} onClick={() => setNetwork('PulseChain')}><i className="pulse-dot"/><span><b>PulseChain</b><small>PLS · Chain 369</small></span></button><button type="button" className={network === 'Ethereum' ? 'active' : ''} onClick={() => setNetwork('Ethereum')}><i className="eth-diamond">◆</i><span><b>Ethereum</b><small>ETH · Chain 1</small></span></button></div></fieldset>
             <button className="scan-button" type="submit">Track this wallet <ArrowRight size={18}/></button>
             <div className="privacy-line"><LockKeyhole size={13}/>Stored locally in your browser only</div>
