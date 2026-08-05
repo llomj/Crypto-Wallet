@@ -52,8 +52,8 @@ function App() {
         <div className="ambient ambient-one"/><div className="ambient ambient-two"/>
         <div className="intake-copy">
           <p className="eyebrow">YOUR ON-CHAIN COMMAND CENTER</p>
-          <h1>See your crypto.<br/><span>Keep your keys.</span></h1>
-          <p>Track your PulseChain and Ethereum portfolio from one private, watch-only dashboard.</p>
+          <h1>Wallet portfolio.<br/><span>One private view.</span></h1>
+          <p>Track your PulseChain and Ethereum wallets from one mobile-first, watch-only dashboard.</p>
           <div className="trust-row"><span><LockKeyhole size={15}/>No wallet connection</span><span><ShieldCheck size={15}/>No seed phrase</span></div>
         </div>
 
