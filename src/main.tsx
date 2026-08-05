@@ -277,9 +277,9 @@ function App() {
   const [selectedGroupId, setSelectedGroupId] = useState(() => readGroups()[0]?.id ?? DEFAULT_GROUP_ID);
   const [newGroupName, setNewGroupName] = useState('');
   const [collapsedGroups, setCollapsedGroups] = useState<string[]>([]);
-  const [trackedCollapsed, setTrackedCollapsed] = useState(false);
+  const [trackedCollapsed, setTrackedCollapsed] = useState(true);
   const [newWalletPanelOpen, setNewWalletPanelOpen] = useState(false);
-  const [addressFormOpen, setAddressFormOpen] = useState(() => readWallets().length === 0);
+  const [addressFormOpen, setAddressFormOpen] = useState(false);
   const [label, setLabel] = useState('');
   const [address, setAddress] = useState('');
   const [network, setNetwork] = useState<Network>('PulseChain');
@@ -289,7 +289,7 @@ function App() {
   const [selectedId, setSelectedId] = useState(() => readWallets()[0]?.id ?? '');
   const [portfolios, setPortfolios] = useState<Record<string, Portfolio>>({});
   const [showAllAssets, setShowAllAssets] = useState(false);
-  const [hideDust, setHideDust] = useState(false);
+  const [hideDust, setHideDust] = useState(true);
   const [selectedToken, setSelectedToken] = useState<string | null>(null);
   const [tokenStats, setTokenStats] = useState<Record<string, TokenStats>>({});
 
@@ -454,7 +454,7 @@ function App() {
                 <div className="wallet-group-head"><button className="group-fold" onClick={() => setCollapsedGroups(current => collapsed ? current.filter(id => id !== group.id) : [...current, group.id])} aria-expanded={!collapsed}><ChevronDown size={16}/><span>{groupWallets.length} {groupWallets.length === 1 ? 'address' : 'addresses'}</span></button><input aria-label={`Name for ${group.name}`} value={group.name} onChange={event => renameGroup(group.id, event.target.value)}/><b>{privateMode ? '••••' : groupValue > 0 ? money(groupValue) : 'Live assets'}</b></div>
                 {!collapsed && <div className="address-rail" aria-label={`${group.name} saved addresses`}>
                   {groupWallets.map((wallet, index) => <button className={`mini-wallet n${index % 4} ${wallet.id === selectedWallet?.id ? 'selected' : ''}`} key={wallet.id} onClick={() => setSelectedId(wallet.id)}>
-                    <span className="mini-number">{String(index + 1).padStart(2, '0')}</span><div><small>{wallet.network}</small><b>{wallet.label}</b><em>{privateMode ? '••••••••' : short(wallet.address)}</em></div><i/>
+                    <span className="mini-number">{String(index + 1).padStart(2, '0')}</span><div><b>{wallet.label}</b><em>{privateMode ? '••••••••' : short(wallet.address)}</em></div><i/>
                   </button>)}
                   {groupWallets.length === 0 && <p className="empty-group">Choose this wallet in the address form to add an address.</p>}
                 </div>}
