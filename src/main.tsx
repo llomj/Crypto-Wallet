@@ -13,6 +13,13 @@ const WRAPPED_NATIVE: Record<Network, string> = {
   PulseChain: '0xA1077a294dDe1B09bB078844Df40758a5D0f9a27',
   Ethereum: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
 };
+const CORE_ICONS: Record<string, string> = {
+  PLS: `${import.meta.env.BASE_URL}token-icons/pls.png`,
+  WPLS: `${import.meta.env.BASE_URL}token-icons/pls.png`,
+  PLSX: `${import.meta.env.BASE_URL}token-icons/plsx.png`,
+  HEX: `${import.meta.env.BASE_URL}token-icons/hex.png`,
+  INC: `${import.meta.env.BASE_URL}token-icons/inc.png`,
+};
 
 function readWallets(): TrackedWallet[] {
   try {
@@ -130,7 +137,7 @@ function App() {
   const [selectedId, setSelectedId] = useState(() => readWallets()[0]?.id ?? '');
   const [portfolios, setPortfolios] = useState<Record<string, Portfolio>>({});
   const [showAllAssets, setShowAllAssets] = useState(false);
-  const [hideDust, setHideDust] = useState(true);
+  const [hideDust, setHideDust] = useState(false);
 
   useEffect(() => localStorage.setItem(STORAGE_KEY, JSON.stringify(wallets)), [wallets]);
   useEffect(() => { if (!wallets.some(wallet => wallet.id === selectedId)) setSelectedId(wallets[0]?.id ?? ''); }, [wallets, selectedId]);
@@ -158,7 +165,7 @@ function App() {
     if (!validAddress(cleanAddress)) return setError('Enter a valid Ethereum-compatible public address.');
     if (wallets.some(w => w.address.toLowerCase() === cleanAddress.toLowerCase() && w.network === network)) return setError('You already track this address on that network.');
     const newWallet = { id: crypto.randomUUID(), label: label.trim() || `Wallet ${wallets.length + 1}`, address: cleanAddress, network };
-    setWallets([newWallet, ...wallets]); setSelectedId(newWallet.id);
+    setWallets([...wallets, newWallet]); setSelectedId(newWallet.id);
     setAddress(''); setLabel(''); setError('');
   };
 
@@ -167,6 +174,11 @@ function App() {
   };
   const selectedWallet = wallets.find(wallet => wallet.id === selectedId) ?? wallets[0];
   const selectedPortfolio = selectedWallet ? portfolios[selectedWallet.id] : undefined;
+  const orderedWallets = [...wallets].sort((left, right) => {
+    const leftNumber = /^Wallet\s+(\d+)$/i.exec(left.label)?.[1];
+    const rightNumber = /^Wallet\s+(\d+)$/i.exec(right.label)?.[1];
+    return leftNumber && rightNumber ? Number(leftNumber) - Number(rightNumber) : 0;
+  });
   const knownValue = selectedPortfolio?.assets.reduce((total, asset) => total + (asset.value ?? 0), 0) ?? 0;
   const filteredAssets = selectedPortfolio?.assets.filter(asset => !hideDust || FEATURED_SYMBOLS.has(asset.symbol.toUpperCase()) || (asset.value !== null && asset.value >= 0.01)) ?? [];
   const hiddenDustCount = (selectedPortfolio?.assets.length ?? 0) - filteredAssets.length;
@@ -208,21 +220,21 @@ function App() {
             {selectedWallet && <button className={`sync-control ${selectedPortfolio?.loading ? 'spinning' : ''}`} onClick={() => refreshWallet(selectedWallet)} disabled={selectedPortfolio?.loading}><RefreshCw size={16}/>{selectedPortfolio?.loading ? 'Syncing' : 'Sync live'}</button>}
           </div>
           <div className="address-rail" aria-label="Saved wallet addresses">
-            {wallets.map((wallet, index) => <button className={`mini-wallet n${index % 4} ${wallet.id === selectedWallet?.id ? 'selected' : ''}`} key={wallet.id} onClick={() => setSelectedId(wallet.id)}>
+            {orderedWallets.map((wallet, index) => <button className={`mini-wallet n${index % 4} ${wallet.id === selectedWallet?.id ? 'selected' : ''}`} key={wallet.id} onClick={() => setSelectedId(wallet.id)}>
               <span className="mini-number">{String(index + 1).padStart(2, '0')}</span><div><small>{wallet.network}</small><b>{wallet.label}</b><em>{privateMode ? '••••••••' : short(wallet.address)}</em></div><i/>
             </button>)}
           </div>
           {selectedWallet && <div className="asset-panel">
-            <div className="asset-panel-head"><div><p className="eyebrow">SELECTED ADDRESS</p><h3>{selectedWallet.label}</h3><button onClick={() => copy(selectedWallet.address, selectedWallet.id)}>{privateMode ? '••••••••••••••••' : short(selectedWallet.address)} {copied === selectedWallet.id ? <em>COPIED</em> : <Copy size={13}/>}</button></div><div className="selected-actions"><button className={hideDust ? 'dust-active' : ''} onClick={() => setHideDust(value => !value)}>{hideDust ? `Dust hidden${hiddenDustCount ? ` · ${hiddenDustCount}` : ''}` : 'Hide dust'}</button><a href={`${selectedWallet.network === 'PulseChain' ? 'https://scan.pulsechain.com/address/' : 'https://etherscan.io/address/'}${selectedWallet.address}`} target="_blank" rel="noreferrer">Explorer <ArrowUpRight size={15}/></a><button onClick={() => setWallets(wallets.filter(wallet => wallet.id !== selectedWallet.id))} aria-label={`Remove ${selectedWallet.label}`}><Trash2 size={16}/></button></div></div>
+            <div className="asset-panel-head"><div><p className="eyebrow">SELECTED ADDRESS</p><h3>{selectedWallet.label}</h3><button onClick={() => copy(selectedWallet.address, selectedWallet.id)}>{privateMode ? '••••••••••••••••' : short(selectedWallet.address)} {copied === selectedWallet.id ? <em>COPIED</em> : <Copy size={13}/>}</button></div><div className="selected-actions"><button className={hideDust ? 'dust-active' : ''} onClick={() => setHideDust(value => !value)}>{hideDust ? `Show dust${hiddenDustCount ? ` · ${hiddenDustCount} hidden` : ''}` : 'Hide dust'}</button><a href={`${selectedWallet.network === 'PulseChain' ? 'https://scan.pulsechain.com/address/' : 'https://etherscan.io/address/'}${selectedWallet.address}`} target="_blank" rel="noreferrer">Explorer <ArrowUpRight size={15}/></a><button onClick={() => setWallets(wallets.filter(wallet => wallet.id !== selectedWallet.id))} aria-label={`Remove ${selectedWallet.label}`}><Trash2 size={16}/></button></div></div>
             <div className="asset-list">
               {selectedPortfolio?.loading && selectedPortfolio.assets.length === 0 && <div className="asset-message"><RefreshCw size={20} className="spin-icon"/>Reading live {selectedWallet.network} assets…</div>}
               {selectedPortfolio?.error && <div className="asset-message error-message">{selectedPortfolio.error}<button onClick={() => refreshWallet(selectedWallet)}>Try again</button></div>}
               {!selectedPortfolio?.loading && !selectedPortfolio?.error && selectedPortfolio?.assets.length === 0 && <div className="asset-message">No indexed assets were found for this address.</div>}
               {visibleAssets.map(asset => <article className="asset-row" key={asset.id}>
-                <div className={`asset-logo ${asset.native ? 'native' : ''}`}><span>{asset.symbol.slice(0, 3)}</span>{asset.icon?.startsWith('https://') ? <img src={asset.icon} alt="" onError={event => { event.currentTarget.style.display = 'none'; }}/>: null}</div>
-                <div className="asset-name"><b>{asset.symbol}</b><small>{asset.name}</small></div>
-                <div className="asset-balance"><b>{privateMode ? '••••' : compactAmount(asset.amount)}</b><small>{asset.symbol}</small></div>
-                <div className="asset-price"><b>{privateMode ? '••••' : asset.value === null ? '—' : money(asset.value)}</b><small>{privateMode ? 'Price hidden' : money(asset.price)}</small></div>
+                <div className={`asset-logo ${asset.native ? 'native' : ''}`}><span>{asset.symbol.slice(0, 3)}</span>{(CORE_ICONS[asset.symbol.toUpperCase()] || asset.icon)?.startsWith('http') || CORE_ICONS[asset.symbol.toUpperCase()] ? <img src={CORE_ICONS[asset.symbol.toUpperCase()] || asset.icon || ''} alt={`${asset.symbol} logo`} onError={event => { event.currentTarget.style.display = 'none'; }}/>: null}</div>
+                <div className="asset-name"><b>{asset.symbol} <small>({asset.name})</small></b></div>
+                <div className="asset-balance"><b>{privateMode ? '••••' : compactAmount(asset.amount)} <small>{asset.symbol}</small></b></div>
+                <div className="asset-price"><b>{privateMode ? '••••' : asset.value === null ? '—' : money(asset.value)}</b><small>{privateMode ? 'Price hidden' : `@ ${money(asset.price)}`}</small></div>
               </article>)}
               {filteredAssets.length > 30 && <button className="show-assets" onClick={() => setShowAllAssets(value => !value)}>{showAllAssets ? 'Show top assets' : `View all ${filteredAssets.length} visible assets`}</button>}
             </div>
