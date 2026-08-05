@@ -11,7 +11,7 @@ type Portfolio = { assets: Asset[]; loading: boolean; error: string; refreshedAt
 const STORAGE_KEY = 'pulse-vault-private-wallets-v2';
 const GROUP_STORAGE_KEY = 'pulse-vault-wallet-groups-v1';
 const DEFAULT_GROUP_ID = 'my-wallet';
-const FEATURED_SYMBOLS = new Set(['PLS', 'WPLS', 'ETH', 'WETH', 'PLSX', 'HEX', 'INC', 'PRVX', 'HDRN', 'ICSA', 'PDI']);
+const FEATURED_SYMBOLS = new Set(['PLS', 'WPLS', 'ETH', 'WETH', 'PLSX', 'HEX', 'INC', 'PRVX', 'HDRN', 'ICSA', 'PDI', 'ASIC', 'PDA']);
 const HIDDEN_DUST_SYMBOLS = new Set(['FTVC', 'SCIVVE', 'HXY']);
 const WRAPPED_NATIVE: Record<Network, string> = {
   PulseChain: '0xA1077a294dDe1B09bB078844Df40758a5D0f9a27',
@@ -26,6 +26,8 @@ const CORE_ICONS: Record<string, string> = {
   WETH: `${import.meta.env.BASE_URL}token-icons/weth.png`,
   HDRN: `${import.meta.env.BASE_URL}token-icons/hdrn.png`,
   ICSA: `${import.meta.env.BASE_URL}token-icons/icsa.png`,
+  ASIC: `${import.meta.env.BASE_URL}token-icons/asic.png`,
+  PDA: `${import.meta.env.BASE_URL}token-icons/pda.png`,
 };
 
 function readWallets(): TrackedWallet[] {
@@ -214,6 +216,7 @@ function App() {
     return leftNumber && rightNumber ? Number(leftNumber) - Number(rightNumber) : 0;
   });
   const knownValue = wallets.reduce((total, wallet) => total + (portfolios[wallet.id]?.assets.reduce((walletTotal, asset) => walletTotal + (asset.value ?? 0), 0) ?? 0), 0);
+  const selectedValue = selectedPortfolio?.assets.reduce((total, asset) => total + (asset.value ?? 0), 0) ?? 0;
   const filteredAssets = selectedPortfolio?.assets.filter(asset => {
     if (!hideDust) return true;
     const symbol = asset.symbol.toUpperCase();
@@ -224,18 +227,13 @@ function App() {
   const visibleAssets = filteredAssets.slice(0, showAllAssets ? undefined : 30);
 
   return <div className="landing-shell">
-    <header className="landing-header">
-      <div className="brand"><div>PULSE<span>VAULT</span></div></div>
-      <div className="header-right"><div className="watch-only"><ShieldCheck size={16}/>Watch-only</div></div>
-    </header>
-
     <main className="landing-main">
       <section className="intake-section">
         <div className="ambient ambient-one"/><div className="ambient ambient-two"/>
         <div className="intake-copy">
-          <div className="hero-title-row"><h1>Wallet portfolio.<br/><span>One private view.</span></h1><div className="hero-live"><Radio size={13}/><b>LIVE</b></div></div>
+          <div className="hero-title-row"><h1>Wallet portfolio.<br/><span>One private view.</span></h1></div>
           <p>Track your PulseChain and Ethereum wallets from one mobile-first, watch-only dashboard.</p>
-          <div className="trust-row"><span><LockKeyhole size={15}/>No wallet connection</span><span><ShieldCheck size={15}/>No seed phrase</span></div>
+          <div className="trust-row"><span><LockKeyhole size={15}/>No wallet connection</span><span><ShieldCheck size={15}/>No seed phrase</span><span className="trust-live"><Radio size={12}/>Live</span></div>
           <div className="ecosystem-strip"><span>BUILT FOR THE ECOSYSTEM</span><div><b>ETH</b><b>PLS</b><b>HEX</b><b>PLSX</b><b>PRVX</b><b>INC</b></div></div>
         </div>
 
@@ -258,7 +256,7 @@ function App() {
         <div className="section-head"><button className="tracked-fold" onClick={() => setTrackedCollapsed(value => !value)} aria-expanded={!trackedCollapsed}><div><p className="eyebrow">PRIVATE WATCHLIST</p><h2>Your tracked wallets</h2></div><ChevronDown size={19}/></button><button className="privacy-toggle" onClick={() => setPrivateMode(v => !v)}>{privateMode ? <EyeOff size={16}/> : <Eye size={16}/>} {privateMode ? 'Reveal' : 'Hide'} addresses</button></div>
         {!trackedCollapsed && <div className="vault-board">
           <div className="vault-summary">
-            <div><span>PORTFOLIO VALUE</span><strong>{privateMode ? '••••••' : knownValue > 0 ? money(knownValue) : 'Live assets'}</strong><small>{wallets.length} {wallets.length === 1 ? 'address' : 'addresses'} · stored on this device</small></div>
+            <div className="portfolio-totals"><div><span>TOTAL PORTFOLIO</span><strong>{privateMode ? '••••••' : knownValue > 0 ? money(knownValue) : 'Live assets'}</strong><small>{wallets.length} {wallets.length === 1 ? 'address' : 'addresses'} · all wallets</small></div>{selectedWallet && <div className="selected-total"><span>{selectedWallet.label}</span><strong>{privateMode ? '••••••' : selectedValue > 0 ? money(selectedValue) : 'Live assets'}</strong><small>Selected address value</small></div>}</div>
             {selectedWallet && <button className={`sync-control ${Object.values(portfolios).some(portfolio => portfolio.loading) ? 'spinning' : ''}`} onClick={() => wallets.forEach(wallet => void refreshWallet(wallet))} disabled={Object.values(portfolios).some(portfolio => portfolio.loading)}><RefreshCw size={16}/>{Object.values(portfolios).some(portfolio => portfolio.loading) ? 'Syncing' : 'Sync all'}</button>}
           </div>
           <div className="group-creator"><FolderPlus size={15}/><input aria-label="New wallet group name" value={newGroupName} onChange={event => setNewGroupName(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addGroup(); } }} placeholder="Name a new wallet, e.g. Whales"/><button onClick={addGroup} disabled={!newGroupName.trim()}>Create wallet</button></div>
@@ -285,7 +283,7 @@ function App() {
               {selectedPortfolio?.error && <div className="asset-message error-message">{selectedPortfolio.error}<button onClick={() => refreshWallet(selectedWallet)}>Try again</button></div>}
               {!selectedPortfolio?.loading && !selectedPortfolio?.error && selectedPortfolio?.assets.length === 0 && <div className="asset-message">No indexed assets were found for this address.</div>}
               {visibleAssets.map(asset => <article className="asset-row" key={asset.id}>
-                <div className={`asset-logo ${asset.native ? 'native' : ''}`}><span>{asset.symbol.slice(0, 3)}</span>{(CORE_ICONS[asset.symbol.toUpperCase()] || asset.icon)?.startsWith('http') || CORE_ICONS[asset.symbol.toUpperCase()] ? <img src={CORE_ICONS[asset.symbol.toUpperCase()] || asset.icon || ''} alt={`${asset.symbol} logo`} onError={event => { event.currentTarget.style.display = 'none'; }}/>: null}</div>
+                <div className={`asset-logo ${asset.native ? 'native' : ''} ${asset.symbol.toLowerCase()}-logo`}><span>{asset.symbol.slice(0, 3)}</span>{(CORE_ICONS[asset.symbol.toUpperCase()] || asset.icon)?.startsWith('http') || CORE_ICONS[asset.symbol.toUpperCase()] ? <img src={CORE_ICONS[asset.symbol.toUpperCase()] || asset.icon || ''} alt={`${asset.symbol} logo`} onError={event => { event.currentTarget.style.display = 'none'; }}/>: null}</div>
                 <div className="asset-main"><div className="asset-name"><b>{asset.symbol} <small>({asset.name})</small></b></div><div className="asset-balance"><b>{privateMode ? '••••' : compactAmount(asset.amount)} <small>{asset.symbol}</small></b></div></div>
                 <div className="asset-price"><b>{privateMode ? '••••' : asset.value === null ? '—' : money(asset.value)}</b><small>{privateMode ? 'Price hidden' : `${money(asset.price)} per ${asset.symbol}`}</small></div>
               </article>)}
