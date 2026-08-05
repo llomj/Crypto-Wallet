@@ -8,6 +8,16 @@ type TrackedWallet = { id: string; label: string; address: string; network: Netw
 type WalletGroup = { id: string; name: string };
 type Asset = { id: string; symbol: string; name: string; amount: string; price: number | null; value: number | null; icon: string | null; native?: boolean };
 type Portfolio = { assets: Asset[]; loading: boolean; error: string; refreshedAt: number | null };
+type TokenStats = {
+  price: number;
+  change24h: number;
+  marketCap: number;
+  liquidity: number;
+  supply: string;
+  holders: string;
+  loading: boolean;
+  error: string;
+};
 const STORAGE_KEY = 'pulse-vault-private-wallets-v2';
 const GROUP_STORAGE_KEY = 'pulse-vault-wallet-groups-v1';
 const DEFAULT_GROUP_ID = 'my-wallet';
@@ -29,6 +39,74 @@ const CORE_ICONS: Record<string, string> = {
   ASIC: `${import.meta.env.BASE_URL}token-icons/asic.png`,
   PDA: `${import.meta.env.BASE_URL}token-icons/pda.png`,
   PDI: `${import.meta.env.BASE_URL}token-icons/pdi.png`,
+  PRVX: `${import.meta.env.BASE_URL}token-icons/prvx.png`,
+};
+
+type TokenInfo = {
+  symbol: string;
+  name: string;
+  subtitle: string;
+  contract: string;
+  network: Network;
+  color: string;
+  borderGradient: string;
+};
+
+const TOKEN_DATA: Record<string, TokenInfo> = {
+  ETH: {
+    symbol: 'ETH',
+    name: 'Ethereum',
+    subtitle: 'Smart Contract Platform',
+    contract: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+    network: 'Ethereum',
+    color: '#627EEA',
+    borderGradient: 'linear-gradient(135deg, #627EEA, #8B9FEF)',
+  },
+  PLS: {
+    symbol: 'PLS',
+    name: 'PulseChain',
+    subtitle: 'Day: 1180',
+    contract: '0xA1077a294dDe1B09bB078844Df40758a5D0f9a27',
+    network: 'PulseChain',
+    color: '#A855F7',
+    borderGradient: 'linear-gradient(135deg, #A855F7, #EC4899, #3B82F6)',
+  },
+  HEX: {
+    symbol: 'HEX',
+    name: 'HEX',
+    subtitle: 'Mining Protocol',
+    contract: '0x2B591e99afE9f32eAA6214f7B7629768c40Eeb39',
+    network: 'Ethereum',
+    color: '#FF6B35',
+    borderGradient: 'linear-gradient(135deg, #FF6B35, #F7931E, #FF2CA8)',
+  },
+  PLSX: {
+    symbol: 'PLSX',
+    name: 'PulseX',
+    subtitle: 'Buy & Burn',
+    contract: '0x95B303987A60C71504D99Aa1b13B4DA07b0790ab',
+    network: 'PulseChain',
+    color: '#EF4444',
+    borderGradient: 'linear-gradient(135deg, #EF4444, #22C55E)',
+  },
+  PRVX: {
+    symbol: 'PRVX',
+    name: 'ProveX',
+    subtitle: 'ProveX',
+    contract: '0x736F478e5C9A6e7e6f5e5e5e5e5e5e5e5e5e5e5e',
+    network: 'PulseChain',
+    color: '#8B5CF6',
+    borderGradient: 'linear-gradient(135deg, #8B5CF6, #F59E0B, #EC4899)',
+  },
+  INC: {
+    symbol: 'INC',
+    name: 'Incentive',
+    subtitle: 'Incentive',
+    contract: '0x736F478e5C9A6e7e6f5e5e5e5e5e5e5e5e5e5e5f',
+    network: 'PulseChain',
+    color: '#10B981',
+    borderGradient: 'linear-gradient(135deg, #10B981, #34D399)',
+  },
 };
 
 function readWallets(): TrackedWallet[] {
@@ -145,6 +223,54 @@ async function loadPortfolio(wallet: TrackedWallet): Promise<Asset[]> {
   }
 }
 
+async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
+  try {
+    const chainId = token.network === 'PulseChain' ? 'pulsechain' : 'ethereum';
+    const data = await jsonRequest(`https://api.dexscreener.com/latest/dex/tokens/${token.contract}`, 10000);
+    const pairs = (Array.isArray(data.pairs) ? data.pairs : []).filter((pair: any) => 
+      pair.chainId === chainId && 
+      pair.baseToken?.address?.toLowerCase() === token.contract.toLowerCase() && 
+      Number(pair.priceUsd) > 0
+    );
+    const pair = pairs.sort((left: any, right: any) => Number(right.liquidity?.usd ?? 0) - Number(left.liquidity?.usd ?? 0))[0];
+    
+    if (!pair) {
+      return { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: false, error: 'No data available' };
+    }
+
+    const price = Number(pair.priceUsd);
+    const change24h = Number(pair.priceChange?.h24 ?? 0);
+    const liquidity = Number(pair.liquidity?.usd ?? 0);
+    const fdv = Number(pair.fdv ?? 0);
+    const marketCap = fdv > 0 ? fdv : liquidity * 10;
+
+    const baseExplorer = token.network === 'PulseChain' ? 'https://api.scan.pulsechain.com' : 'https://eth.blockscout.com';
+    let supply = 'N/A';
+    let holders = 'N/A';
+    
+    try {
+      const tokenData = await jsonRequest(`${baseExplorer}/api/v2/tokens/${token.contract}`, 8000);
+      if (tokenData) {
+        const totalSupply = tokenData.total_supply;
+        const decimals = tokenData.decimals ?? 18;
+        if (totalSupply) {
+          const formatted = formatUnits(String(totalSupply), decimals);
+          const num = Number(formatted);
+          supply = compactAmount(formatted);
+        }
+        holders = tokenData.holders ? Number(tokenData.holders).toLocaleString() : 'N/A';
+      }
+    } catch {
+      supply = 'N/A';
+      holders = 'N/A';
+    }
+
+    return { price, change24h, marketCap, liquidity, supply, holders, loading: false, error: '' };
+  } catch {
+    return { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: false, error: 'Failed to load' };
+  }
+}
+
 function App() {
   const [wallets, setWallets] = useState<TrackedWallet[]>(readWallets);
   const [walletGroups, setWalletGroups] = useState<WalletGroup[]>(readGroups);
@@ -164,6 +290,8 @@ function App() {
   const [portfolios, setPortfolios] = useState<Record<string, Portfolio>>({});
   const [showAllAssets, setShowAllAssets] = useState(false);
   const [hideDust, setHideDust] = useState(false);
+  const [selectedToken, setSelectedToken] = useState<string | null>(null);
+  const [tokenStats, setTokenStats] = useState<Record<string, TokenStats>>({});
 
   useEffect(() => localStorage.setItem(STORAGE_KEY, JSON.stringify(wallets)), [wallets]);
   useEffect(() => localStorage.setItem(GROUP_STORAGE_KEY, JSON.stringify(walletGroups)), [walletGroups]);
@@ -242,7 +370,7 @@ function App() {
           <div className="hero-title-row"><h1>Wallet portfolio.<br/><span>One private view.</span></h1></div>
           <p>Track your PulseChain and Ethereum wallets from one mobile-first, watch-only dashboard.</p>
           <div className="trust-row"><span><LockKeyhole size={15}/>No wallet connection</span><span><ShieldCheck size={15}/>No seed phrase</span><span className="trust-live"><Radio size={12}/>Live</span></div>
-          <div className="ecosystem-strip"><span>BUILT FOR THE ECOSYSTEM</span><div><b>ETH</b><b>PLS</b><b>HEX</b><b>PLSX</b><b>PRVX</b><b>INC</b></div></div>
+          <div className="ecosystem-strip"><span>BUILT FOR THE ECOSYSTEM</span><div><b onClick={() => { setSelectedToken('ETH'); if (!tokenStats['ETH']) { setTokenStats(current => ({ ...current, 'ETH': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['ETH']).then(stats => setTokenStats(current => ({ ...current, 'ETH': stats }))); } }}>ETH</b><b onClick={() => { setSelectedToken('PLS'); if (!tokenStats['PLS']) { setTokenStats(current => ({ ...current, 'PLS': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['PLS']).then(stats => setTokenStats(current => ({ ...current, 'PLS': stats }))); } }}>PLS</b><b onClick={() => { setSelectedToken('HEX'); if (!tokenStats['HEX']) { setTokenStats(current => ({ ...current, 'HEX': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['HEX']).then(stats => setTokenStats(current => ({ ...current, 'HEX': stats }))); } }}>HEX</b><b onClick={() => { setSelectedToken('PLSX'); if (!tokenStats['PLSX']) { setTokenStats(current => ({ ...current, 'PLSX': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['PLSX']).then(stats => setTokenStats(current => ({ ...current, 'PLSX': stats }))); } }}>PLSX</b><b onClick={() => { setSelectedToken('PRVX'); if (!tokenStats['PRVX']) { setTokenStats(current => ({ ...current, 'PRVX': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['PRVX']).then(stats => setTokenStats(current => ({ ...current, 'PRVX': stats }))); } }}>PRVX</b><b onClick={() => { setSelectedToken('INC'); if (!tokenStats['INC']) { setTokenStats(current => ({ ...current, 'INC': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['INC']).then(stats => setTokenStats(current => ({ ...current, 'INC': stats }))); } }}>INC</b></div></div>
         </div>
 
         <form className={`address-panel ${addressFormOpen ? 'open' : 'collapsed'}`} onSubmit={addWallet}>
@@ -258,6 +386,50 @@ function App() {
             <div className="privacy-line"><LockKeyhole size={13}/>Stored locally in your browser only</div>
           </div>}
         </form>
+
+        {selectedToken && TOKEN_DATA[selectedToken] && <div className="token-detail-panel">
+          <div className="token-panel-glow" style={{ background: TOKEN_DATA[selectedToken].color + '28' }}/>
+          <div className="token-panel-content" style={{ borderColor: TOKEN_DATA[selectedToken].color }}>
+            <div className="token-panel-header">
+              <div className="token-panel-title">
+                <div className="token-icon" style={{ background: TOKEN_DATA[selectedToken].borderGradient }}>
+                  <img src={CORE_ICONS[selectedToken] || ''} alt={selectedToken} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}/>
+                  <span>{selectedToken.slice(0, 2)}</span>
+                </div>
+                <div>
+                  <h3>{selectedToken}</h3>
+                  <p>{TOKEN_DATA[selectedToken].subtitle}</p>
+                </div>
+              </div>
+              <div className="token-panel-price">
+                <span className="token-price-value">{tokenStats[selectedToken]?.price ? money(tokenStats[selectedToken].price) : 'Loading...'}</span>
+                <span className={`token-price-change ${tokenStats[selectedToken]?.change24h >= 0 ? 'positive' : 'negative'}`}>
+                  {tokenStats[selectedToken]?.change24h >= 0 ? '+' : ''}{tokenStats[selectedToken]?.change24h.toFixed(2)}%
+                </span>
+              </div>
+            </div>
+            <div className="token-stats-row">
+              <div className="token-stat">
+                <span>MC</span>
+                <b>{tokenStats[selectedToken]?.marketCap ? compactAmount(String(tokenStats[selectedToken].marketCap / 1000000)) + 'M' : 'N/A'}</b>
+              </div>
+              <div className="token-stat">
+                <span>Liquidity</span>
+                <b>{tokenStats[selectedToken]?.liquidity ? compactAmount(String(tokenStats[selectedToken].liquidity / 1000000)) + 'M' : 'N/A'}</b>
+              </div>
+              <div className="token-stat">
+                <span>Supply</span>
+                <b>{tokenStats[selectedToken]?.supply || 'N/A'}</b>
+              </div>
+              <div className="token-stat">
+                <span>Holders</span>
+                <b>{tokenStats[selectedToken]?.holders || 'N/A'}</b>
+              </div>
+            </div>
+            <button className="token-chart-button" onClick={() => { const urls: Record<string, string> = { ETH: 'https://www.dextools.io/app/en/ether/pair-explorer/0xa43fe16908251ee70ef7470386909c572f0e2fe5', PLS: 'https://www.dextools.io/app/en/pulse/pair-explorer/0x95b303987a60c71504d99aa1b13b4da07b0790ab', HEX: 'https://www.dextools.io/app/en/ether/pair-explorer/0x2b591e99afe9f32eaa6214f7b7629768c40eeb39', PLSX: 'https://www.dextools.io/app/en/pulse/pair-explorer/0x95b303987a60c71504d99aa1b13b4da07b0790ab', PRVX: 'https://www.dextools.io/app/en/pulse/pair-explorer/0x736f478e5c9a6e7e6f5e5e5e5e5e5e5e5e5e5e5e', INC: 'https://www.dextools.io/app/en/pulse/pair-explorer/0x736f478e5c9a6e7e6f5e5e5e5e5e5e5e5e5e5e5f' }; window.open(urls[selectedToken] || 'https://www.dextools.io', '_blank', 'noreferrer'); }}>Show Chart <ChevronDown size={16}/></button>
+            <button className="token-close-button" onClick={() => setSelectedToken(null)}>Close</button>
+          </div>
+        </div>}
       </section>
 
       {wallets.length > 0 && <><section className={`tracked-section tracked-panel ${trackedCollapsed ? 'collapsed' : 'open'}`}>
