@@ -1,6 +1,6 @@
 import React, { FormEvent, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowRight, ArrowUpRight, Copy, Eye, EyeOff, LockKeyhole, Plus, Radio, RefreshCw, ShieldCheck, Trash2, WalletCards, Zap } from 'lucide-react';
+import { ArrowRight, ArrowUpRight, Copy, Eye, EyeOff, LockKeyhole, Radio, RefreshCw, ShieldCheck, Trash2, WalletCards, Zap } from 'lucide-react';
 import './styles.css';
 
 type Network = 'PulseChain' | 'Ethereum';
@@ -8,6 +8,11 @@ type TrackedWallet = { id: string; label: string; address: string; network: Netw
 type Asset = { id: string; symbol: string; name: string; amount: string; price: number | null; value: number | null; icon: string | null; native?: boolean };
 type Portfolio = { assets: Asset[]; loading: boolean; error: string; refreshedAt: number | null };
 const STORAGE_KEY = 'pulse-vault-private-wallets-v2';
+const FEATURED_SYMBOLS = new Set(['PLS', 'WPLS', 'PLSX', 'HEX', 'INC', 'PRVX', 'ICSA', 'HXY', 'PDI']);
+const WRAPPED_NATIVE: Record<Network, string> = {
+  PulseChain: '0xA1077a294dDe1B09bB078844Df40758a5D0f9a27',
+  Ethereum: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+};
 
 function readWallets(): TrackedWallet[] {
   try {
@@ -51,6 +56,31 @@ async function jsonRequest(url: string, timeout = 16000) {
   } finally { window.clearTimeout(timer); }
 }
 
+async function enrichMarketAssets(assets: Asset[], network: Network) {
+  const chainId = network === 'PulseChain' ? 'pulsechain' : 'ethereum';
+  const prioritized = [...assets.filter(asset => FEATURED_SYMBOLS.has(asset.symbol.toUpperCase())), ...assets];
+  const unique = prioritized.filter((asset, index, list) => list.findIndex(item => item.id.toLowerCase() === asset.id.toLowerCase()) === index).slice(0, 40);
+  const enriched = new Map<string, { price: number; icon: string | null }>();
+  for (let start = 0; start < unique.length; start += 5) {
+    const group = unique.slice(start, start + 5);
+    const results = await Promise.allSettled(group.map(async asset => {
+      const contract = asset.native ? WRAPPED_NATIVE[network] : asset.id;
+      if (!validAddress(contract)) return null;
+      const data = await jsonRequest(`https://api.dexscreener.com/latest/dex/tokens/${contract}`, 10000);
+      const pairs = (Array.isArray(data.pairs) ? data.pairs : []).filter((pair: any) => pair.chainId === chainId && pair.baseToken?.address?.toLowerCase() === contract.toLowerCase() && Number(pair.priceUsd) > 0);
+      const pair = pairs.sort((left: any, right: any) => Number(right.liquidity?.usd ?? 0) - Number(left.liquidity?.usd ?? 0))[0];
+      if (!pair) return null;
+      return { id: asset.id, price: Number(pair.priceUsd), icon: typeof pair.info?.imageUrl === 'string' ? pair.info.imageUrl : null };
+    }));
+    for (const result of results) if (result.status === 'fulfilled' && result.value) enriched.set(result.value.id, { price: result.value.price, icon: result.value.icon });
+  }
+  return assets.map(asset => {
+    const market = enriched.get(asset.id);
+    if (!market) return asset;
+    return { ...asset, price: market.price, value: Number(asset.amount) * market.price, icon: market.icon || asset.icon };
+  }).sort((left, right) => (right.value ?? -1) - (left.value ?? -1));
+}
+
 async function loadPortfolio(wallet: TrackedWallet): Promise<Asset[]> {
   const base = wallet.network === 'PulseChain' ? 'https://api.scan.pulsechain.com' : 'https://eth.blockscout.com';
   const nativeSymbol = wallet.network === 'PulseChain' ? 'PLS' : 'ETH';
@@ -72,7 +102,7 @@ async function loadPortfolio(wallet: TrackedWallet): Promise<Asset[]> {
       const price = token.exchange_rate === null || token.exchange_rate === undefined ? null : Number(token.exchange_rate);
       assets.push({ id: token.address_hash ?? token.address ?? `${token.symbol}-${assets.length}`, symbol: token.symbol || 'TOKEN', name: token.name || 'Unknown token', amount, price, value: price === null ? null : Number(amount) * price, icon: token.icon_url || null });
     }
-    return assets.sort((a, b) => (b.value ?? -1) - (a.value ?? -1));
+    return await enrichMarketAssets(assets, wallet.network);
   } catch {
     const [nativeData, tokensData] = await Promise.all([
       jsonRequest(`${base}/api?module=account&action=balance&address=${wallet.address}`),
@@ -85,7 +115,7 @@ async function loadPortfolio(wallet: TrackedWallet): Promise<Asset[]> {
       if (Number(amount) === 0) continue;
       assets.push({ id: token.contractAddress ?? `${token.symbol}-${assets.length}`, symbol: token.symbol || 'TOKEN', name: token.name || 'Unknown token', amount, price: null, value: null, icon: null });
     }
-    return assets;
+    return await enrichMarketAssets(assets, wallet.network);
   }
 }
 
@@ -100,7 +130,7 @@ function App() {
   const [selectedId, setSelectedId] = useState(() => readWallets()[0]?.id ?? '');
   const [portfolios, setPortfolios] = useState<Record<string, Portfolio>>({});
   const [showAllAssets, setShowAllAssets] = useState(false);
-  const [showAddForm, setShowAddForm] = useState(() => readWallets().length === 0);
+  const [hideDust, setHideDust] = useState(true);
 
   useEffect(() => localStorage.setItem(STORAGE_KEY, JSON.stringify(wallets)), [wallets]);
   useEffect(() => { if (!wallets.some(wallet => wallet.id === selectedId)) setSelectedId(wallets[0]?.id ?? ''); }, [wallets, selectedId]);
@@ -129,7 +159,7 @@ function App() {
     if (wallets.some(w => w.address.toLowerCase() === cleanAddress.toLowerCase() && w.network === network)) return setError('You already track this address on that network.');
     const newWallet = { id: crypto.randomUUID(), label: label.trim() || `Wallet ${wallets.length + 1}`, address: cleanAddress, network };
     setWallets([newWallet, ...wallets]); setSelectedId(newWallet.id);
-    setAddress(''); setLabel(''); setError(''); setShowAddForm(false);
+    setAddress(''); setLabel(''); setError('');
   };
 
   const copy = async (value: string, id: string) => {
@@ -138,7 +168,9 @@ function App() {
   const selectedWallet = wallets.find(wallet => wallet.id === selectedId) ?? wallets[0];
   const selectedPortfolio = selectedWallet ? portfolios[selectedWallet.id] : undefined;
   const knownValue = selectedPortfolio?.assets.reduce((total, asset) => total + (asset.value ?? 0), 0) ?? 0;
-  const visibleAssets = selectedPortfolio?.assets.slice(0, showAllAssets ? undefined : 30) ?? [];
+  const filteredAssets = selectedPortfolio?.assets.filter(asset => !hideDust || FEATURED_SYMBOLS.has(asset.symbol.toUpperCase()) || (asset.value !== null && asset.value >= 0.01)) ?? [];
+  const hiddenDustCount = (selectedPortfolio?.assets.length ?? 0) - filteredAssets.length;
+  const visibleAssets = filteredAssets.slice(0, showAllAssets ? undefined : 30);
 
   return <div className="landing-shell">
     <header className="landing-header">
@@ -147,27 +179,25 @@ function App() {
     </header>
 
     <main className="landing-main">
-      <section className={`intake-section ${wallets.length > 0 ? 'returning' : ''}`}>
+      <section className="intake-section">
         <div className="ambient ambient-one"/><div className="ambient ambient-two"/>
-        {wallets.length === 0 && <div className="intake-copy">
+        <div className="intake-copy">
           <h1>Wallet portfolio.<br/><span>One private view.</span></h1>
           <p>Track your PulseChain and Ethereum wallets from one mobile-first, watch-only dashboard.</p>
           <div className="trust-row"><span><LockKeyhole size={15}/>No wallet connection</span><span><ShieldCheck size={15}/>No seed phrase</span></div>
           <div className="ecosystem-strip"><span>BUILT FOR THE ECOSYSTEM</span><div><b>ETH</b><b>PLS</b><b>HEX</b><b>PLSX</b><b>PRVX</b><b>INC</b></div></div>
-        </div>}
+        </div>
 
-        {wallets.length > 0 && !showAddForm && <div className="portfolio-bar"><div><p className="eyebrow">WALLET PORTFOLIO</p><h1>One private view.</h1><span>Live read-only tracking across {wallets.length} {wallets.length === 1 ? 'address' : 'addresses'}.</span></div><button onClick={() => setShowAddForm(true)}><Plus size={17}/>Add address</button></div>}
-
-        {(wallets.length === 0 || showAddForm) && <form className="address-panel" onSubmit={addWallet}>
+        <form className="address-panel" onSubmit={addWallet}>
           <div className="panel-glow"/>
-          <div className="panel-heading"><div className="wallet-orbit"><WalletCards size={24}/></div><div><p className="eyebrow">ADD A WALLET</p><h2>Enter a public address</h2></div>{wallets.length > 0 && <button type="button" className="close-add" onClick={() => setShowAddForm(false)}>Cancel</button>}</div>
+          <div className="panel-heading"><div className="wallet-orbit"><WalletCards size={24}/></div><div><p className="eyebrow">ADD A WALLET</p><h2>Enter a public address</h2></div></div>
           <p className="panel-note">Your address stays on this device. It is never added to our code or public GitHub.</p>
           <label>Wallet name <span>optional</span><input value={label} onChange={e => setLabel(e.target.value)} placeholder="Give this wallet a private label" autoComplete="off"/></label>
           <label>Public wallet address<div className={`address-input ${error ? 'invalid' : ''}`}><input aria-label="Public wallet address" value={address} onChange={e => {setAddress(e.target.value.trim()); setError('')}} placeholder="Paste the complete public address" autoCapitalize="off" autoCorrect="off" spellCheck={false}/></div>{error && <small className="error">{error}</small>}</label>
           <fieldset><legend>Choose network</legend><div className="network-choice"><button type="button" className={network === 'PulseChain' ? 'active' : ''} onClick={() => setNetwork('PulseChain')}><i className="pulse-dot"/><span><b>PulseChain</b><small>PLS · Chain 369</small></span></button><button type="button" className={network === 'Ethereum' ? 'active' : ''} onClick={() => setNetwork('Ethereum')}><i className="eth-diamond">◆</i><span><b>Ethereum</b><small>ETH · Chain 1</small></span></button></div></fieldset>
           <button className="scan-button" type="submit">Track this wallet <ArrowRight size={18}/></button>
           <div className="privacy-line"><LockKeyhole size={13}/>Stored locally in your browser only</div>
-        </form>}
+        </form>
       </section>
 
       {wallets.length > 0 && <section className="tracked-section">
@@ -183,7 +213,7 @@ function App() {
             </button>)}
           </div>
           {selectedWallet && <div className="asset-panel">
-            <div className="asset-panel-head"><div><p className="eyebrow">SELECTED ADDRESS</p><h3>{selectedWallet.label}</h3><button onClick={() => copy(selectedWallet.address, selectedWallet.id)}>{privateMode ? '••••••••••••••••' : short(selectedWallet.address)} {copied === selectedWallet.id ? <em>COPIED</em> : <Copy size={13}/>}</button></div><div className="selected-actions"><a href={`${selectedWallet.network === 'PulseChain' ? 'https://scan.pulsechain.com/address/' : 'https://etherscan.io/address/'}${selectedWallet.address}`} target="_blank" rel="noreferrer">Explorer <ArrowUpRight size={15}/></a><button onClick={() => setWallets(wallets.filter(wallet => wallet.id !== selectedWallet.id))} aria-label={`Remove ${selectedWallet.label}`}><Trash2 size={16}/></button></div></div>
+            <div className="asset-panel-head"><div><p className="eyebrow">SELECTED ADDRESS</p><h3>{selectedWallet.label}</h3><button onClick={() => copy(selectedWallet.address, selectedWallet.id)}>{privateMode ? '••••••••••••••••' : short(selectedWallet.address)} {copied === selectedWallet.id ? <em>COPIED</em> : <Copy size={13}/>}</button></div><div className="selected-actions"><button className={hideDust ? 'dust-active' : ''} onClick={() => setHideDust(value => !value)}>{hideDust ? `Dust hidden${hiddenDustCount ? ` · ${hiddenDustCount}` : ''}` : 'Hide dust'}</button><a href={`${selectedWallet.network === 'PulseChain' ? 'https://scan.pulsechain.com/address/' : 'https://etherscan.io/address/'}${selectedWallet.address}`} target="_blank" rel="noreferrer">Explorer <ArrowUpRight size={15}/></a><button onClick={() => setWallets(wallets.filter(wallet => wallet.id !== selectedWallet.id))} aria-label={`Remove ${selectedWallet.label}`}><Trash2 size={16}/></button></div></div>
             <div className="asset-list">
               {selectedPortfolio?.loading && selectedPortfolio.assets.length === 0 && <div className="asset-message"><RefreshCw size={20} className="spin-icon"/>Reading live {selectedWallet.network} assets…</div>}
               {selectedPortfolio?.error && <div className="asset-message error-message">{selectedPortfolio.error}<button onClick={() => refreshWallet(selectedWallet)}>Try again</button></div>}
@@ -194,7 +224,7 @@ function App() {
                 <div className="asset-balance"><b>{privateMode ? '••••' : compactAmount(asset.amount)}</b><small>{asset.symbol}</small></div>
                 <div className="asset-price"><b>{privateMode ? '••••' : asset.value === null ? '—' : money(asset.value)}</b><small>{privateMode ? 'Price hidden' : money(asset.price)}</small></div>
               </article>)}
-              {(selectedPortfolio?.assets.length ?? 0) > 30 && <button className="show-assets" onClick={() => setShowAllAssets(value => !value)}>{showAllAssets ? 'Show top assets' : `View all ${selectedPortfolio?.assets.length} assets`}</button>}
+              {filteredAssets.length > 30 && <button className="show-assets" onClick={() => setShowAllAssets(value => !value)}>{showAllAssets ? 'Show top assets' : `View all ${filteredAssets.length} visible assets`}</button>}
             </div>
             <div className="live-data-note"><Radio size={11}/>Live read-only data from {selectedWallet.network} · {selectedPortfolio?.refreshedAt ? `updated ${new Date(selectedPortfolio.refreshedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'waiting to sync'}</div>
           </div>}
