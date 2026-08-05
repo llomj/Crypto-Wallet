@@ -434,11 +434,13 @@ function App() {
 
       {wallets.length > 0 && <><section className={`tracked-section tracked-panel ${trackedCollapsed ? 'collapsed' : 'open'}`}>
         <div className="tracked-glow"/>
-        <div className="section-head">
-          <div className="section-head-top">
-            <button className="tracked-fold" onClick={() => setTrackedCollapsed(value => !value)} aria-expanded={!trackedCollapsed}><div><p className="eyebrow">PRIVATE WATCHLIST</p><h2>Your tracked wallets</h2></div><ChevronDown size={19}/></button>
-            <button className="privacy-toggle" onClick={() => setPrivateMode(v => !v)}>{privateMode ? <EyeOff size={16}/> : <Eye size={16}/>} {privateMode ? 'Reveal' : 'Hide'} addresses</button>
-          </div>
+        <button className="panel-heading panel-fold" onClick={() => setTrackedCollapsed(value => !value)} aria-expanded={!trackedCollapsed}>
+          <div className="wallet-orbit"><WalletCards size={24}/></div>
+          <div><p className="eyebrow">PRIVATE WATCHLIST</p><h2>Your tracked wallets</h2></div>
+          <ChevronDown size={18}/>
+        </button>
+        <div className="tracked-actions">
+          <button className="privacy-toggle" onClick={() => setPrivateMode(v => !v)}>{privateMode ? <EyeOff size={14}/> : <Eye size={14}/>} {privateMode ? 'Reveal' : 'Hide'} addresses</button>
         </div>
         {!trackedCollapsed && <div className="vault-board">
           <div className="vault-summary">
