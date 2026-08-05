@@ -434,7 +434,12 @@ function App() {
 
       {wallets.length > 0 && <><section className={`tracked-section tracked-panel ${trackedCollapsed ? 'collapsed' : 'open'}`}>
         <div className="tracked-glow"/>
-        <div className="section-head"><button className="tracked-fold" onClick={() => setTrackedCollapsed(value => !value)} aria-expanded={!trackedCollapsed}><div><p className="eyebrow">PRIVATE WATCHLIST</p><h2>Your tracked wallets</h2></div><ChevronDown size={19}/></button><button className="privacy-toggle" onClick={() => setPrivateMode(v => !v)}>{privateMode ? <EyeOff size={16}/> : <Eye size={16}/>} {privateMode ? 'Reveal' : 'Hide'} addresses</button></div>
+        <div className="section-head">
+          <div className="section-head-top">
+            <button className="tracked-fold" onClick={() => setTrackedCollapsed(value => !value)} aria-expanded={!trackedCollapsed}><div><p className="eyebrow">PRIVATE WATCHLIST</p><h2>Your tracked wallets</h2></div><ChevronDown size={19}/></button>
+            <button className="privacy-toggle" onClick={() => setPrivateMode(v => !v)}>{privateMode ? <EyeOff size={16}/> : <Eye size={16}/>} {privateMode ? 'Reveal' : 'Hide'} addresses</button>
+          </div>
+        </div>
         {!trackedCollapsed && <div className="vault-board">
           <div className="vault-summary">
             <div className="portfolio-totals"><div><span>TOTAL PORTFOLIO</span><strong>{privateMode ? '••••••' : knownValue > 0 ? money(knownValue) : 'Live assets'}</strong><small>{wallets.length} {wallets.length === 1 ? 'address' : 'addresses'} · all wallets</small></div>{selectedWallet && <div className="selected-total"><span>{selectedWallet.label}</span><strong>{privateMode ? '••••••' : selectedValue > 0 ? money(selectedValue) : 'Live assets'}</strong><small>Selected address value</small></div>}</div>
