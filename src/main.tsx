@@ -28,6 +28,7 @@ const CORE_ICONS: Record<string, string> = {
   ICSA: `${import.meta.env.BASE_URL}token-icons/icsa.png`,
   ASIC: `${import.meta.env.BASE_URL}token-icons/asic.png`,
   PDA: `${import.meta.env.BASE_URL}token-icons/pda.png`,
+  PDI: `${import.meta.env.BASE_URL}token-icons/pdi.png`,
 };
 
 function readWallets(): TrackedWallet[] {
@@ -46,6 +47,7 @@ function readGroups(): WalletGroup[] {
 }
 
 function short(address: string) { return `${address.slice(0, 7)}…${address.slice(-5)}`; }
+function tokenKey(symbol: string) { return symbol.toUpperCase().replace(/[^A-Z0-9]/g, ''); }
 function validAddress(value: string) { return /^0x[a-fA-F0-9]{40}$/.test(value.trim()); }
 function formatUnits(value: string, decimals = 18) {
   try {
@@ -82,7 +84,7 @@ async function jsonRequest(url: string, timeout = 16000) {
 
 async function enrichMarketAssets(assets: Asset[], network: Network) {
   const chainId = network === 'PulseChain' ? 'pulsechain' : 'ethereum';
-  const prioritized = [...assets.filter(asset => FEATURED_SYMBOLS.has(asset.symbol.toUpperCase())), ...assets];
+  const prioritized = [...assets.filter(asset => FEATURED_SYMBOLS.has(tokenKey(asset.symbol))), ...assets];
   const unique = prioritized.filter((asset, index, list) => list.findIndex(item => item.id.toLowerCase() === asset.id.toLowerCase()) === index).slice(0, 40);
   const enriched = new Map<string, { price: number; icon: string | null }>();
   for (let start = 0; start < unique.length; start += 5) {
@@ -224,8 +226,9 @@ function App() {
   const selectedValue = selectedPortfolio?.assets.reduce((total, asset) => total + (asset.value ?? 0), 0) ?? 0;
   const filteredAssets = selectedPortfolio?.assets.filter(asset => {
     if (!hideDust) return true;
-    const symbol = asset.symbol.toUpperCase();
-    if (HIDDEN_DUST_SYMBOLS.has(symbol)) return false;
+    const symbol = tokenKey(asset.symbol);
+    const name = tokenKey(asset.name);
+    if (HIDDEN_DUST_SYMBOLS.has(symbol) || [...HIDDEN_DUST_SYMBOLS].some(dust => name.includes(dust))) return false;
     return FEATURED_SYMBOLS.has(symbol) || (asset.value !== null && asset.value >= 0.01);
   }) ?? [];
   const hiddenDustCount = (selectedPortfolio?.assets.length ?? 0) - filteredAssets.length;
@@ -257,7 +260,8 @@ function App() {
         </form>
       </section>
 
-      {wallets.length > 0 && <section className="tracked-section">
+      {wallets.length > 0 && <><section className={`tracked-section tracked-panel ${trackedCollapsed ? 'collapsed' : 'open'}`}>
+        <div className="tracked-glow"/>
         <div className="section-head"><button className="tracked-fold" onClick={() => setTrackedCollapsed(value => !value)} aria-expanded={!trackedCollapsed}><div><p className="eyebrow">PRIVATE WATCHLIST</p><h2>Your tracked wallets</h2></div><ChevronDown size={19}/></button><button className="privacy-toggle" onClick={() => setPrivateMode(v => !v)}>{privateMode ? <EyeOff size={16}/> : <Eye size={16}/>} {privateMode ? 'Reveal' : 'Hide'} addresses</button></div>
         {!trackedCollapsed && <div className="vault-board">
           <div className="vault-summary">
@@ -287,7 +291,7 @@ function App() {
               {selectedPortfolio?.error && <div className="asset-message error-message">{selectedPortfolio.error}<button onClick={() => refreshWallet(selectedWallet)}>Try again</button></div>}
               {!selectedPortfolio?.loading && !selectedPortfolio?.error && selectedPortfolio?.assets.length === 0 && <div className="asset-message">No indexed assets were found for this address.</div>}
               {visibleAssets.map(asset => <article className="asset-row" key={asset.id}>
-                <div className={`asset-logo ${asset.native ? 'native' : ''} ${asset.symbol.toLowerCase()}-logo`}><span>{asset.symbol.slice(0, 3)}</span>{(CORE_ICONS[asset.symbol.toUpperCase()] || asset.icon)?.startsWith('http') || CORE_ICONS[asset.symbol.toUpperCase()] ? <img src={CORE_ICONS[asset.symbol.toUpperCase()] || asset.icon || ''} alt={`${asset.symbol} logo`} onError={event => { event.currentTarget.style.display = 'none'; }}/>: null}</div>
+                <div className={`asset-logo ${asset.native ? 'native' : ''} ${tokenKey(asset.symbol).toLowerCase()}-logo`}><span>{asset.symbol.slice(0, 3)}</span>{(CORE_ICONS[tokenKey(asset.symbol)] || asset.icon)?.startsWith('http') || CORE_ICONS[tokenKey(asset.symbol)] ? <img src={CORE_ICONS[tokenKey(asset.symbol)] || asset.icon || ''} alt={`${asset.symbol} logo`} onError={event => { event.currentTarget.style.display = 'none'; }}/>: null}</div>
                 <div className="asset-main"><div className="asset-name"><b>{asset.symbol} <small>({asset.name})</small></b></div><div className="asset-balance"><b>{privateMode ? '••••' : compactAmount(asset.amount)} <small>{asset.symbol}</small></b></div></div>
                 <div className="asset-price"><b>{privateMode ? '••••' : asset.value === null ? '—' : money(asset.value)}</b><small>{privateMode ? 'Price hidden' : money(asset.price)}</small></div>
               </article>)}
@@ -296,8 +300,7 @@ function App() {
             <div className="live-data-note"><Radio size={11}/>Live read-only data from {selectedWallet.network} · {selectedPortfolio?.refreshedAt ? `updated ${new Date(selectedPortfolio.refreshedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'waiting to sync'}</div>
           </div>}
         </div>}
-        <div className={`new-wallet-panel ${newWalletPanelOpen ? 'open' : ''}`}><button className="new-wallet-fold" onClick={() => setNewWalletPanelOpen(value => !value)} aria-expanded={newWalletPanelOpen}><span><FolderPlus size={17}/>Create another wallet</span><ChevronDown size={17}/></button>{newWalletPanelOpen && <div className="group-creator"><FolderPlus size={15}/><input aria-label="New wallet group name" value={newGroupName} onChange={event => setNewGroupName(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addGroup(); } }} placeholder="Name a new wallet, e.g. Whales"/><button onClick={addGroup} disabled={!newGroupName.trim()}>Create wallet</button></div>}</div>
-      </section>}
+      </section><div className={`new-wallet-panel ${newWalletPanelOpen ? 'open' : ''}`}><div className="new-wallet-glow"/><button className="new-wallet-fold" onClick={() => setNewWalletPanelOpen(value => !value)} aria-expanded={newWalletPanelOpen}><span className="new-wallet-title"><i className="wallet-orbit"><FolderPlus size={20}/></i><span><small>ORGANIZE YOUR WATCHLIST</small><b>Create another wallet</b></span></span><ChevronDown size={17}/></button>{newWalletPanelOpen && <div className="new-wallet-body"><p className="panel-note">Create a separate wallet for personal addresses, whales, or any watchlist you choose.</p><div className="group-creator"><FolderPlus size={15}/><input aria-label="New wallet group name" value={newGroupName} onChange={event => setNewGroupName(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addGroup(); } }} placeholder="Name a new wallet, e.g. Whales"/><button onClick={addGroup} disabled={!newGroupName.trim()}>Create wallet</button></div></div>}</div></>}
 
       {wallets.length === 0 && <section className="next-preview"><p className="eyebrow">WHAT COMES NEXT</p><h2>Your wallet becomes a living dashboard.</h2><div className="preview-panels"><div/><div/><div/></div><p>Token panels inspired by your reference design will appear here after we connect live portfolio data.</p></section>}
     </main>
