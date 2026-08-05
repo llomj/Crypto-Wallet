@@ -51,10 +51,10 @@ function App() {
       <section className="intake-section">
         <div className="ambient ambient-one"/><div className="ambient ambient-two"/>
         <div className="intake-copy">
-          <p className="eyebrow">YOUR ON-CHAIN COMMAND CENTER</p>
           <h1>Wallet portfolio.<br/><span>One private view.</span></h1>
           <p>Track your PulseChain and Ethereum wallets from one mobile-first, watch-only dashboard.</p>
           <div className="trust-row"><span><LockKeyhole size={15}/>No wallet connection</span><span><ShieldCheck size={15}/>No seed phrase</span></div>
+          <div className="ecosystem-strip"><span>BUILT FOR THE ECOSYSTEM</span><div><b>ETH</b><b>PLS</b><b>HEX</b><b>PLSX</b><b>PRVX</b><b>INC</b></div></div>
         </div>
 
         <form className="address-panel" onSubmit={addWallet}>
@@ -68,8 +68,6 @@ function App() {
           <div className="privacy-line"><LockKeyhole size={13}/>Stored locally in your browser only</div>
         </form>
       </section>
-
-      <section className="ecosystem-strip"><span>BUILT FOR THE ECOSYSTEM</span><div><b>PLS</b><b>HEX</b><b>PLSX</b><b>PRVX</b><b>INC</b><b>ETH</b></div></section>
 
       {wallets.length > 0 && <section className="tracked-section">
         <div className="section-head"><div><p className="eyebrow">PRIVATE WATCHLIST</p><h2>Your tracked wallets</h2></div><button className="privacy-toggle" onClick={() => setPrivateMode(v => !v)}>{privateMode ? <EyeOff size={16}/> : <Eye size={16}/>} {privateMode ? 'Reveal' : 'Hide'} addresses</button></div>
