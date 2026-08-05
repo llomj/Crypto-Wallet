@@ -1,6 +1,6 @@
 import React, { FormEvent, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowRight, ArrowUpRight, Copy, Eye, EyeOff, LayoutDashboard, LockKeyhole, Radio, ShieldCheck, Trash2, WalletCards, Zap } from 'lucide-react';
+import { ArrowRight, ArrowUpRight, Copy, Eye, EyeOff, LockKeyhole, Radio, RefreshCw, ShieldCheck, Trash2, WalletCards, Zap } from 'lucide-react';
 import './styles.css';
 
 type Network = 'PulseChain' | 'Ethereum';
@@ -82,7 +82,7 @@ function App() {
 
       {wallets.length === 0 && <section className="next-preview"><p className="eyebrow">WHAT COMES NEXT</p><h2>Your wallet becomes a living dashboard.</h2><div className="preview-panels"><div/><div/><div/></div><p>Token panels inspired by your reference design will appear here after we connect live portfolio data.</p></section>}
     </main>
-    <footer><div className="brand mini"><Zap size={14}/>PULSE<span>VAULT</span></div><span>Watch-only portfolio intelligence</span></footer>
+    <footer><div className="footer-tools"><div className="brand mini"><Zap size={14}/>PULSE<span>VAULT</span></div><button className="refresh-button" onClick={() => window.location.reload()} aria-label="Refresh PulseVault"><RefreshCw size={14}/>Refresh</button></div><span>Watch-only portfolio intelligence</span></footer>
   </div>;
 }
 
