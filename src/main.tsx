@@ -1,6 +1,7 @@
-import React, { FormEvent, useEffect, useState } from 'react';
+import React, { FormEvent, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ArrowRight, ArrowUpRight, ChevronDown, Copy, Eye, EyeOff, FolderPlus, LockKeyhole, Radio, RefreshCw, ShieldCheck, Trash2, WalletCards, Zap } from 'lucide-react';
+import { createChart, IChartApi, ISeriesApi, LineStyle, LineSeries } from 'lightweight-charts';
 import './styles.css';
 
 type Network = 'PulseChain' | 'Ethereum';
@@ -296,6 +297,24 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
   }
 }
 
+async function fetchChartOHLCV(token: TokenInfo, period: string): Promise<{ time: number; value: number }[]> {
+  try {
+    const chainId = token.network === 'PulseChain' ? 'pulsechain' : 'ethereum';
+    const intervalMap: Record<string, string> = { '24H': '5m', '7D': '1h', '30D': '4h', '3M': '1d', '6M': '1d', '1Y': '1d', 'ATL': '1d', 'All': '1d' };
+    const interval = intervalMap[period] || '1d';
+    const data = await jsonRequest(`https://api.dexscreener.com/token-ohlcv/v1/${chainId}/${token.contract}?interval=${interval}`, 15000);
+    const candles = Array.isArray(data.candles) ? data.candles : [];
+    const now = Math.floor(Date.now() / 1000);
+    const periodSeconds: Record<string, number> = { '24H': 86400, '7D': 604800, '30D': 2592000, '3M': 7776000, '6M': 15552000, '1Y': 31536000, 'ATL': 315360000, 'All': 315360000 };
+    const cutoff = now - (periodSeconds[period] || 315360000);
+    return candles
+      .filter((c: any) => c.time >= cutoff && c.close > 0)
+      .map((c: any) => ({ time: c.time, value: c.close }));
+  } catch {
+    return [];
+  }
+}
+
 function App() {
   const [wallets, setWallets] = useState<TrackedWallet[]>(readWallets);
   const [walletGroups, setWalletGroups] = useState<WalletGroup[]>(readGroups);
@@ -317,11 +336,54 @@ function App() {
   const [hideDust, setHideDust] = useState(true);
   const [selectedToken, setSelectedToken] = useState<string | null>(null);
   const [tokenStats, setTokenStats] = useState<Record<string, TokenStats>>({});
+  const [chartOpen, setChartOpen] = useState(false);
+  const [chartPeriod, setChartPeriod] = useState('24H');
+  const [chartData, setChartData] = useState<{ time: number; value: number }[]>([]);
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<any>(null);
 
   useEffect(() => localStorage.setItem(STORAGE_KEY, JSON.stringify(wallets)), [wallets]);
   useEffect(() => localStorage.setItem(GROUP_STORAGE_KEY, JSON.stringify(walletGroups)), [walletGroups]);
   useEffect(() => { if (!wallets.some(wallet => wallet.id === selectedId)) setSelectedId(wallets[0]?.id ?? ''); }, [wallets, selectedId]);
   useEffect(() => setShowAllAssets(false), [selectedId]);
+  useEffect(() => { setChartOpen(false); setChartPeriod('24H'); setChartData([]); }, [selectedToken]);
+
+  useEffect(() => {
+    if (!chartOpen || !selectedToken || !TOKEN_DATA[selectedToken] || !chartContainerRef.current) return;
+    const token = TOKEN_DATA[selectedToken];
+    void (async () => {
+      const data = await fetchChartOHLCV(token, chartPeriod);
+      setChartData(data);
+      if (chartRef.current) { chartRef.current.remove(); chartRef.current = null; seriesRef.current = null; }
+      if (!data.length || !chartContainerRef.current) return;
+      const chart = createChart(chartContainerRef.current, {
+        width: chartContainerRef.current.clientWidth,
+        height: 220,
+        layout: { background: { color: '#0a0a0a' }, textColor: '#6f6776', fontSize: 10 },
+        grid: { vertLines: { visible: false }, horzLines: { color: '#ffffff08' } },
+        rightPriceScale: { visible: false },
+        timeScale: { borderColor: '#ffffff0c', timeVisible: true, secondsVisible: false },
+        crosshair: { vertLine: { visible: false }, horzLine: { visible: false } },
+        handleScroll: false,
+        handleScale: false,
+      });
+      const series = chart.addSeries(LineSeries, {
+        color: token.color,
+        lineWidth: 2,
+        lineStyle: LineStyle.Solid,
+        lastValueVisible: false,
+        priceLineVisible: false,
+        crosshairMarkerVisible: true,
+        crosshairMarkerRadius: 4,
+      });
+      series.setData(data.map(d => ({ time: d.time as any, value: d.value })));
+      chart.timeScale().fitContent();
+      chartRef.current = chart;
+      seriesRef.current = series;
+    })();
+    return () => { if (chartRef.current) { chartRef.current.remove(); chartRef.current = null; seriesRef.current = null; } };
+  }, [chartOpen, selectedToken, chartPeriod]);
 
   const refreshWallet = async (wallet: TrackedWallet) => {
     setPortfolios(current => ({ ...current, [wallet.id]: { assets: current[wallet.id]?.assets ?? [], loading: true, error: '', refreshedAt: current[wallet.id]?.refreshedAt ?? null } }));
@@ -452,7 +514,13 @@ function App() {
                 <b>{tokenStats[selectedToken]?.holders || 'N/A'}</b>
               </div>
             </div>
-            <button className="token-chart-button" onClick={() => { const urls: Record<string, string> = { ETH: 'https://www.dextools.io/app/en/ether/pair-explorer/0xa43fe16908251ee70ef7470386909c572f0e2fe5', PLS: 'https://www.dextools.io/app/en/pulse/pair-explorer/0x95b303987a60c71504d99aa1b13b4da07b0790ab', HEX: 'https://www.dextools.io/app/en/ether/pair-explorer/0x2b591e99afe9f32eaa6214f7b7629768c40eeb39', PLSX: 'https://www.dextools.io/app/en/pulse/pair-explorer/0x95b303987a60c71504d99aa1b13b4da07b0790ab', PRVX: 'https://www.dextools.io/app/en/pulse/pair-explorer/0x736f478e5c9a6e7e6f5e5e5e5e5e5e5e5e5e5e5e', INC: 'https://www.dextools.io/app/en/pulse/pair-explorer/0x736f478e5c9a6e7e6f5e5e5e5e5e5e5e5e5e5e5f' }; window.open(urls[selectedToken] || 'https://www.dextools.io', '_blank', 'noreferrer'); }}>Show Chart <ChevronDown size={16}/></button>
+            <div className="chart-period-selector">
+              {['24H', '7D', '30D', '3M', '6M', '1Y', 'ATL', 'All'].map(p => (
+                <button key={p} className={`chart-period-btn ${chartPeriod === p ? 'active' : ''}`} onClick={() => setChartPeriod(p)}>{p}</button>
+              ))}
+            </div>
+            <button className="token-chart-button" onClick={() => setChartOpen(v => !v)}>{chartOpen ? 'Hide Chart' : 'Show Chart'} {chartOpen ? <ChevronDown size={16} style={{ transform: 'rotate(180deg)' }}/> : <ChevronDown size={16}/>}</button>
+            {chartOpen && <div className="token-chart-container"><div ref={chartContainerRef} className="token-chart"/></div>}
             <button className="token-close-button" onClick={() => setSelectedToken(null)}>Close</button>
           </div>
         </div>}
