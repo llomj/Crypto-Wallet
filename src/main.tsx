@@ -244,16 +244,13 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
   try {
     const baseExplorer = token.network === 'PulseChain' ? 'https://api.scan.pulsechain.com' : 'https://eth.blockscout.com';
     
-    // Fetch token data from blockchain
+    // Fetch token data from blockchain for supply and holders
     const tokenData = await jsonRequest(`${baseExplorer}/api/v2/tokens/${token.contract}`, 10000);
     
     if (!tokenData) {
       return { price: 0, change24h: 0, change7d: 0, change30d: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: false, error: 'Token not found' };
     }
 
-    // Get current price from blockchain exchange_rate
-    const price = tokenData.exchange_rate ? Number(tokenData.exchange_rate) : 0;
-    
     // Get supply and holders from blockchain
     let supply = 'N/A';
     let holders = 'N/A';
@@ -269,12 +266,44 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
       holders = holderCount >= 1000 ? compactAmount(String(holderCount), 1) : holderCount.toLocaleString();
     }
     
-    // Calculate market cap from price and supply
+    // Get price data
+    let price = 0;
+    let liquidity = 0;
     let marketCap = 0;
-    if (price > 0 && tokenData.total_supply) {
+    
+    // For Ethereum, try block explorer exchange_rate first
+    if (token.network === 'Ethereum' && tokenData.exchange_rate) {
+      price = Number(tokenData.exchange_rate);
+    }
+    
+    // For PulseChain or if exchange_rate is null, use DexScreener
+    if (price === 0) {
+      try {
+        const chainId = token.network === 'PulseChain' ? 'pulsechain' : 'ethereum';
+        const dexData = await jsonRequest(`https://api.dexscreener.com/latest/dex/tokens/${token.contract}`, 10000);
+        const pairs = (Array.isArray(dexData.pairs) ? dexData.pairs : []).filter((pair: any) => 
+          pair.chainId === chainId && 
+          pair.baseToken?.address?.toLowerCase() === token.contract.toLowerCase() && 
+          Number(pair.priceUsd) > 0
+        );
+        const pair = pairs.sort((left: any, right: any) => Number(right.liquidity?.usd ?? 0) - Number(left.liquidity?.usd ?? 0))[0];
+        
+        if (pair) {
+          price = Number(pair.priceUsd);
+          liquidity = Number(pair.liquidity?.usd ?? 0);
+          const fdv = Number(pair.fdv ?? 0);
+          marketCap = fdv > 0 ? fdv : liquidity * 10;
+        }
+      } catch (e) {
+        console.log('DexScreener fallback failed:', e);
+      }
+    }
+    
+    // Calculate market cap from price and supply if not from DexScreener
+    if (marketCap === 0 && price > 0 && tokenData.total_supply) {
       const decimals = tokenData.decimals ?? 18;
       const supplyNum = Number(formatUnits(String(tokenData.total_supply), decimals));
-      marketCap = (price * supplyNum) / 1000000; // Convert to millions
+      marketCap = price * supplyNum;
     }
     
     // Fetch price history from CoinGecko for percentage changes
@@ -283,12 +312,11 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
     let change30d = 0;
     
     try {
-      // Map tokens to CoinGecko IDs
       const coinGeckoIds: Record<string, string> = {
         'ETH': 'ethereum',
         'PLS': 'pulsechain',
         'HEX': 'hex',
-        'pHEX': 'hex', // Same as HEX but on PulseChain
+        'pHEX': 'hex',
         'PLSX': 'pulsex',
         'PRVX': 'provex',
         'INC': 'incentive'
@@ -305,19 +333,16 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
           const prices = historyData.prices;
           const currentPrice = prices[prices.length - 1][1];
           
-          // 24h change: compare with price 24 hours ago
           const oneDayAgo = prices.find((p: any) => p[0] <= Date.now() - 86400000);
           if (oneDayAgo) {
             change24h = ((currentPrice - oneDayAgo[1]) / oneDayAgo[1]) * 100;
           }
           
-          // 7D change: compare with price 7 days ago
           const sevenDaysAgo = prices.find((p: any) => p[0] <= Date.now() - 604800000);
           if (sevenDaysAgo) {
             change7d = ((currentPrice - sevenDaysAgo[1]) / sevenDaysAgo[1]) * 100;
           }
           
-          // 30D change: compare with first price point
           const firstPrice = prices[0][1];
           if (firstPrice > 0) {
             change30d = ((currentPrice - firstPrice) / firstPrice) * 100;
@@ -326,19 +351,15 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
       }
     } catch (e) {
       console.log('CoinGecko fetch failed:', e);
-      // Use 0 for changes if CoinGecko fails
     }
-    
-    // Liquidity - estimate from market cap (blockchain doesn't provide this directly)
-    const liquidity = marketCap * 0.02; // Rough estimate: 2% of market cap as liquidity
     
     return { 
       price, 
       change24h, 
       change7d,
       change30d,
-      marketCap,
-      liquidity,
+      marketCap: marketCap / 1000000,
+      liquidity: liquidity / 1000000,
       supply, 
       holders, 
       loading: false, 
