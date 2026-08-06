@@ -96,7 +96,7 @@ const TOKEN_DATA: Record<string, TokenInfo> = {
   },
   PRVX: {
     symbol: 'PRVX',
-    name: 'ProveX',
+    name: 'PRVX',
     subtitle: 'ProveX',
     contract: '0x736F478e5C9A6e7e6f5e5e5e5e5e5e5e5e5e5e5e',
     network: 'PulseChain',
@@ -257,8 +257,29 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
 
     const price = Number(pair.priceUsd);
     const change24h = Number(pair.priceChange?.h24 ?? 0);
-    const change7d = Number(pair.priceChange?.d7 ?? 0);
-    const change30d = Number(pair.priceChange?.d30 ?? 0);
+    
+    // Fetch chart data to calculate 7D and 30D changes
+    let change7d = 0;
+    let change30d = 0;
+    try {
+      const chartData = await fetchChartOHLCV(token, '30D');
+      if (chartData.length >= 2) {
+        const currentPrice = chartData[chartData.length - 1].value;
+        // 7D change: compare current price with price 7 days ago
+        const sevenDaysAgo = chartData.find(d => d.time <= chartData[chartData.length - 1].time - 604800);
+        if (sevenDaysAgo) {
+          change7d = ((currentPrice - sevenDaysAgo.value) / sevenDaysAgo.value) * 100;
+        }
+        // 30D change: compare current price with first data point
+        const firstPrice = chartData[0].value;
+        if (firstPrice > 0) {
+          change30d = ((currentPrice - firstPrice) / firstPrice) * 100;
+        }
+      }
+    } catch {
+      // Use 0 if chart data fetch fails
+    }
+    
     const liquidity = Number(pair.liquidity?.usd ?? 0);
     const fdv = Number(pair.fdv ?? 0);
     const marketCap = fdv > 0 ? fdv : liquidity * 10;
@@ -281,7 +302,8 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
           holders = holderCount >= 1000 ? compactAmount(String(holderCount), 1) : holderCount.toLocaleString();
         }
       }
-    } catch {
+    } catch (e) {
+      console.log('Holders fetch failed:', e);
       supply = 'N/A';
       holders = 'N/A';
     }
