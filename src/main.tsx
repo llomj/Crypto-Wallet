@@ -105,9 +105,9 @@ const TOKEN_DATA: Record<string, TokenInfo> = {
   },
   INC: {
     symbol: 'INC',
-    name: 'Incentive',
+    name: 'INC',
     subtitle: 'Incentive',
-    contract: '0x736F478e5C9A6e7e6f5e5e5e5e5e5e5e5e5e5e5f',
+    contract: '0x2fa878Ab3F87CC1C9737Fc071108F904c0B0C95d',
     network: 'PulseChain',
     color: '#00FF00',
     borderGradient: 'linear-gradient(90deg, #00FF00, #00CC00)',
@@ -456,6 +456,7 @@ function App() {
   const [chartOpen, setChartOpen] = useState(false);
   const [chartPeriod, setChartPeriod] = useState('24H');
   const [chartData, setChartData] = useState<{ time: number; value: number }[]>([]);
+  const [chartPercentage, setChartPercentage] = useState(0);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<any>(null);
@@ -467,13 +468,29 @@ function App() {
   useEffect(() => { setChartOpen(false); setChartPeriod('24H'); setChartData([]); }, [selectedToken]);
 
   useEffect(() => {
-    if (!chartOpen || !selectedToken || !TOKEN_DATA[selectedToken] || !chartContainerRef.current) return;
+    if (!selectedToken || !TOKEN_DATA[selectedToken]) return;
     const token = TOKEN_DATA[selectedToken];
     void (async () => {
       const data = await fetchChartOHLCV(token, chartPeriod);
       setChartData(data);
+      
+      // Calculate percentage change from chart data
+      if (data.length >= 2) {
+        const firstPrice = data[0].value;
+        const lastPrice = data[data.length - 1].value;
+        if (firstPrice > 0) {
+          const percentageChange = ((lastPrice - firstPrice) / firstPrice) * 100;
+          setChartPercentage(percentageChange);
+        }
+      } else {
+        setChartPercentage(0);
+      }
+      
+      // Only render chart if chart is open
+      if (!chartOpen || !chartContainerRef.current || !data.length) return;
+      
       if (chartRef.current) { chartRef.current.remove(); chartRef.current = null; seriesRef.current = null; }
-      if (!data.length || !chartContainerRef.current) return;
+      
       const chart = createChart(chartContainerRef.current, {
         width: chartContainerRef.current.clientWidth,
         height: 220,
@@ -500,7 +517,7 @@ function App() {
       seriesRef.current = series;
     })();
     return () => { if (chartRef.current) { chartRef.current.remove(); chartRef.current = null; seriesRef.current = null; } };
-  }, [chartOpen, selectedToken, chartPeriod]);
+  }, [selectedToken, chartPeriod, chartOpen]);
 
   const refreshWallet = async (wallet: TrackedWallet) => {
     setPortfolios(current => ({ ...current, [wallet.id]: { assets: current[wallet.id]?.assets ?? [], loading: true, error: '', refreshedAt: current[wallet.id]?.refreshedAt ?? null } }));
@@ -610,17 +627,17 @@ function App() {
                   <h3>{selectedToken}</h3>
                   <div className="token-subtitle-row">
                     <p>{TOKEN_DATA[selectedToken].subtitle}</p>
-                    <span className={`token-price-change ${(() => {
+                    <span className={`token-price-change ${chartOpen ? (chartPercentage >= 0 ? 'positive' : 'negative') : (() => {
                       const stats = tokenStats[selectedToken];
                       if (!stats) return 'positive';
-                      const change = chartPeriod === '7D' ? stats.change7d : chartPeriod === '30D' ? stats.change30d : stats.change24h;
-                      return change >= 0 ? 'positive' : 'negative';
+                      return stats.change24h >= 0 ? 'positive' : 'negative';
                     })()}`}>
-                      {(() => {
+                      {chartOpen ? (
+                        `${chartPercentage >= 0 ? '+' : ''}${chartPercentage.toFixed(2)}%`
+                      ) : (() => {
                         const stats = tokenStats[selectedToken];
                         if (!stats) return '+0.00%';
-                        const change = chartPeriod === '7D' ? stats.change7d : chartPeriod === '30D' ? stats.change30d : stats.change24h;
-                        return `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
+                        return `${stats.change24h >= 0 ? '+' : ''}${stats.change24h.toFixed(2)}%`;
                       })()}
                     </span>
                   </div>
