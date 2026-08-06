@@ -62,16 +62,16 @@ const TOKEN_DATA: Record<string, TokenInfo> = {
     contract: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
     network: 'Ethereum',
     color: '#627EEA',
-    borderGradient: 'linear-gradient(135deg, #627EEA, #8B9FEF)',
+    borderGradient: 'linear-gradient(90deg, #627EEA, #8B9FEF)',
   },
   PLS: {
     symbol: 'PLS',
     name: 'PulseChain',
-    subtitle: 'Day: 1180',
+    subtitle: 'Day: 1181',
     contract: '0xA1077a294dDe1B09bB078844Df40758a5D0f9a27',
     network: 'PulseChain',
     color: '#00BFFF',
-    borderGradient: 'linear-gradient(135deg, #00BFFF, #8B5CF6, #FF1493)',
+    borderGradient: 'linear-gradient(90deg, #00BFFF, #8B5CF6, #FF1493, #FF4500)',
   },
   HEX: {
     symbol: 'HEX',
@@ -79,8 +79,8 @@ const TOKEN_DATA: Record<string, TokenInfo> = {
     subtitle: 'Mining Protocol',
     contract: '0x2B591e99afE9f32eAA6214f7B7629768c40Eeb39',
     network: 'Ethereum',
-    color: '#FF8C00',
-    borderGradient: 'linear-gradient(135deg, #FF8C00, #FFD700, #FF1493)',
+    color: '#FF1493',
+    borderGradient: 'linear-gradient(90deg, #FF1493, #FF6B35, #FFD700)',
   },
   PLSX: {
     symbol: 'PLSX',
@@ -89,7 +89,7 @@ const TOKEN_DATA: Record<string, TokenInfo> = {
     contract: '0x95B303987A60C71504D99Aa1b13B4DA07b0790ab',
     network: 'PulseChain',
     color: '#00FF00',
-    borderGradient: 'linear-gradient(135deg, #00FF00, #FF0000)',
+    borderGradient: 'linear-gradient(90deg, #00FF00, #FF0000)',
   },
   PRVX: {
     symbol: 'PRVX',
@@ -98,7 +98,7 @@ const TOKEN_DATA: Record<string, TokenInfo> = {
     contract: '0x736F478e5C9A6e7e6f5e5e5e5e5e5e5e5e5e5e5e',
     network: 'PulseChain',
     color: '#FF8C00',
-    borderGradient: 'linear-gradient(135deg, #FF8C00, #8B5CF6, #FF1493)',
+    borderGradient: 'linear-gradient(90deg, #FF8C00, #8B5CF6, #00BFFF)',
   },
   INC: {
     symbol: 'INC',
@@ -107,7 +107,7 @@ const TOKEN_DATA: Record<string, TokenInfo> = {
     contract: '0x736F478e5C9A6e7e6f5e5e5e5e5e5e5e5e5e5e5f',
     network: 'PulseChain',
     color: '#00FF00',
-    borderGradient: 'linear-gradient(135deg, #00FF00, #00CC00)',
+    borderGradient: 'linear-gradient(90deg, #00FF00, #00CC00)',
   },
   pHEX: {
     symbol: 'pHEX',
@@ -115,8 +115,8 @@ const TOKEN_DATA: Record<string, TokenInfo> = {
     subtitle: 'Mining Protocol',
     contract: '0x2B591e99afE9f32eAA6214f7B7629768c40Eeb39',
     network: 'PulseChain',
-    color: '#FF8C00',
-    borderGradient: 'linear-gradient(135deg, #FF8C00, #FFD700, #FF1493)',
+    color: '#FF1493',
+    borderGradient: 'linear-gradient(90deg, #FF1493, #FF6B35, #FFD700)',
   },
 };
 
@@ -148,13 +148,16 @@ function formatUnits(value: string, decimals = 18) {
     return `${negative ? '-' : ''}${whole}${fraction ? `.${fraction}` : ''}`;
   } catch { return '0'; }
 }
-function compactAmount(value: string) {
+function compactAmount(value: string, decimals = 1) {
   const number = Number(value);
   if (!Number.isFinite(number)) return value;
-  if (Math.abs(number) >= 1_000_000_000) return `${(number / 1_000_000_000).toFixed(2)}B`;
-  if (Math.abs(number) >= 1_000_000) return `${(number / 1_000_000).toFixed(2)}M`;
-  if (Math.abs(number) >= 1_000) return `${(number / 1_000).toFixed(2)}K`;
-  return number.toLocaleString(undefined, { maximumFractionDigits: 6 });
+  if (Math.abs(number) >= 1_000_000_000) return `${(number / 1_000_000_000).toFixed(decimals)}B`;
+  if (Math.abs(number) >= 1_000_000) return `${(number / 1_000_000).toFixed(decimals)}M`;
+  if (Math.abs(number) >= 1_000) return `${(number / 1_000).toFixed(decimals)}K`;
+  return number.toLocaleString(undefined, { maximumFractionDigits: decimals });
+}
+function compactSupply(value: string) {
+  return compactAmount(value, 2);
 }
 function money(value: number | null) {
   if (value === null || !Number.isFinite(value)) return 'Price unavailable';
@@ -266,17 +269,28 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
         const decimals = tokenData.decimals ?? 18;
         if (totalSupply) {
           const formatted = formatUnits(String(totalSupply), decimals);
-          const num = Number(formatted);
-          supply = compactAmount(formatted);
+          supply = compactSupply(formatted);
         }
-        holders = tokenData.holders ? Number(tokenData.holders).toLocaleString() : 'N/A';
+        if (tokenData.holders) {
+          const holderCount = Number(tokenData.holders);
+          holders = holderCount >= 1000 ? compactAmount(String(holderCount), 1) : holderCount.toLocaleString();
+        }
       }
     } catch {
       supply = 'N/A';
       holders = 'N/A';
     }
 
-    return { price, change24h, marketCap, liquidity, supply, holders, loading: false, error: '' };
+    return { 
+      price, 
+      change24h, 
+      marketCap: marketCap / 1000000,
+      liquidity: liquidity / 1000000,
+      supply, 
+      holders, 
+      loading: false, 
+      error: '' 
+    };
   } catch {
     return { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: false, error: 'Failed to load' };
   }
@@ -423,11 +437,11 @@ function App() {
             <div className="token-stats-row">
               <div className="token-stat">
                 <span>MC</span>
-                <b>{tokenStats[selectedToken]?.marketCap ? compactAmount(String(tokenStats[selectedToken].marketCap / 1000000)) + 'M' : 'N/A'}</b>
+                <b>{tokenStats[selectedToken]?.marketCap ? `$${tokenStats[selectedToken].marketCap.toFixed(1)}M` : 'N/A'}</b>
               </div>
               <div className="token-stat">
                 <span>Liquidity</span>
-                <b>{tokenStats[selectedToken]?.liquidity ? compactAmount(String(tokenStats[selectedToken].liquidity / 1000000)) + 'M' : 'N/A'}</b>
+                <b>{tokenStats[selectedToken]?.liquidity ? `$${tokenStats[selectedToken].liquidity.toFixed(1)}M` : 'N/A'}</b>
               </div>
               <div className="token-stat">
                 <span>Supply</span>
