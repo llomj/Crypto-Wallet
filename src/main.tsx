@@ -98,7 +98,7 @@ const TOKEN_DATA: Record<string, TokenInfo> = {
     symbol: 'PRVX',
     name: 'PRVX',
     subtitle: 'ProveX',
-    contract: '0x736F478e5C9A6e7e6f5e5e5e5e5e5e5e5e5e5e5e',
+    contract: '0xF6f8Db0aBa00007681F8fAF16A0FDa1c9B030b11',
     network: 'PulseChain',
     color: '#FF8C00',
     borderGradient: 'linear-gradient(90deg, #FF8C00, #8B5CF6, #00BFFF)',
@@ -266,36 +266,50 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
       holders = holderCount >= 1000 ? compactAmount(String(holderCount), 1) : holderCount.toLocaleString();
     }
     
-    // Get price data
+    // Get price data - use DexScreener as primary (block explorer doesn't provide price for PulseChain)
     let price = 0;
     let liquidity = 0;
     let marketCap = 0;
     
-    // For Ethereum, try block explorer exchange_rate first
-    if (token.network === 'Ethereum' && tokenData.exchange_rate) {
-      price = Number(tokenData.exchange_rate);
-    }
-    
-    // For PulseChain or if exchange_rate is null, use DexScreener
-    if (price === 0) {
+    try {
+      const chainId = token.network === 'PulseChain' ? 'pulsechain' : 'ethereum';
+      const dexData = await jsonRequest(`https://api.dexscreener.com/latest/dex/tokens/${token.contract}`, 10000);
+      const pairs = (Array.isArray(dexData.pairs) ? dexData.pairs : []).filter((pair: any) => 
+        pair.chainId === chainId && 
+        pair.baseToken?.address?.toLowerCase() === token.contract.toLowerCase() && 
+        Number(pair.priceUsd) > 0
+      );
+      const pair = pairs.sort((left: any, right: any) => Number(right.liquidity?.usd ?? 0) - Number(left.liquidity?.usd ?? 0))[0];
+      
+      if (pair) {
+        price = Number(pair.priceUsd);
+        liquidity = Number(pair.liquidity?.usd ?? 0);
+        const fdv = Number(pair.fdv ?? 0);
+        marketCap = fdv > 0 ? fdv : liquidity * 10;
+      }
+    } catch (e) {
+      console.log('DexScreener failed, trying CoinGecko fallback:', e);
+      // Fallback to CoinGecko if DexScreener fails
       try {
-        const chainId = token.network === 'PulseChain' ? 'pulsechain' : 'ethereum';
-        const dexData = await jsonRequest(`https://api.dexscreener.com/latest/dex/tokens/${token.contract}`, 10000);
-        const pairs = (Array.isArray(dexData.pairs) ? dexData.pairs : []).filter((pair: any) => 
-          pair.chainId === chainId && 
-          pair.baseToken?.address?.toLowerCase() === token.contract.toLowerCase() && 
-          Number(pair.priceUsd) > 0
-        );
-        const pair = pairs.sort((left: any, right: any) => Number(right.liquidity?.usd ?? 0) - Number(left.liquidity?.usd ?? 0))[0];
-        
-        if (pair) {
-          price = Number(pair.priceUsd);
-          liquidity = Number(pair.liquidity?.usd ?? 0);
-          const fdv = Number(pair.fdv ?? 0);
-          marketCap = fdv > 0 ? fdv : liquidity * 10;
+        const coinGeckoIds: Record<string, string> = {
+          'ETH': 'ethereum',
+          'PLS': 'pulsechain',
+          'HEX': 'hex',
+          'pHEX': 'hex',
+          'PLSX': 'pulsex',
+          'PRVX': 'provex',
+          'INC': 'incentive'
+        };
+        const coinId = coinGeckoIds[token.symbol];
+        if (coinId) {
+          const cgData = await jsonRequest(`https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd&include_market_cap=true`, 10000);
+          if (cgData?.[coinId]) {
+            price = cgData[coinId].usd || 0;
+            marketCap = cgData[coinId].usd_market_cap || 0;
+          }
         }
-      } catch (e) {
-        console.log('DexScreener fallback failed:', e);
+      } catch (e2) {
+        console.log('CoinGecko fallback also failed:', e2);
       }
     }
     
@@ -350,7 +364,7 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
         }
       }
     } catch (e) {
-      console.log('CoinGecko fetch failed:', e);
+      console.log('CoinGecko history fetch failed:', e);
     }
     
     return { 
