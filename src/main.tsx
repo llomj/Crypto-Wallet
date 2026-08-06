@@ -12,6 +12,8 @@ type Portfolio = { assets: Asset[]; loading: boolean; error: string; refreshedAt
 type TokenStats = {
   price: number;
   change24h: number;
+  change7d: number;
+  change30d: number;
   marketCap: number;
   liquidity: number;
   supply: string;
@@ -250,11 +252,13 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
     const pair = pairs.sort((left: any, right: any) => Number(right.liquidity?.usd ?? 0) - Number(left.liquidity?.usd ?? 0))[0];
     
     if (!pair) {
-      return { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: false, error: 'No data available' };
+      return { price: 0, change24h: 0, change7d: 0, change30d: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: false, error: 'No data available' };
     }
 
     const price = Number(pair.priceUsd);
     const change24h = Number(pair.priceChange?.h24 ?? 0);
+    const change7d = Number(pair.priceChange?.d7 ?? 0);
+    const change30d = Number(pair.priceChange?.d30 ?? 0);
     const liquidity = Number(pair.liquidity?.usd ?? 0);
     const fdv = Number(pair.fdv ?? 0);
     const marketCap = fdv > 0 ? fdv : liquidity * 10;
@@ -285,6 +289,8 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
     return { 
       price, 
       change24h, 
+      change7d,
+      change30d,
       marketCap: marketCap / 1000000,
       liquidity: liquidity / 1000000,
       supply, 
@@ -293,7 +299,7 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
       error: '' 
     };
   } catch {
-    return { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: false, error: 'Failed to load' };
+    return { price: 0, change24h: 0, change7d: 0, change30d: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: false, error: 'Failed to load' };
   }
 }
 
@@ -458,7 +464,12 @@ function App() {
           <div className="hero-title-row"><h1>Wallet portfolio.<br/><span>One private view.</span></h1></div>
           <p>Track your PulseChain and Ethereum wallets from one mobile-first, watch-only dashboard.</p>
           <div className="trust-row"><span><LockKeyhole size={15}/>No wallet connection</span><span><ShieldCheck size={15}/>No seed phrase</span><span className="trust-live"><Radio size={12}/>Live</span></div>
-          <div className="ecosystem-strip"><span>BUILT FOR THE ECOSYSTEM</span><div><b onClick={() => { setSelectedToken('ETH'); if (!tokenStats['ETH']) { setTokenStats(current => ({ ...current, 'ETH': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['ETH']).then(stats => setTokenStats(current => ({ ...current, 'ETH': stats }))); } }}>ETH</b><b onClick={() => { setSelectedToken('PLS'); if (!tokenStats['PLS']) { setTokenStats(current => ({ ...current, 'PLS': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['PLS']).then(stats => setTokenStats(current => ({ ...current, 'PLS': stats }))); } }}>PLS</b><b onClick={() => { setSelectedToken('HEX'); if (!tokenStats['HEX']) { setTokenStats(current => ({ ...current, 'HEX': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['HEX']).then(stats => setTokenStats(current => ({ ...current, 'HEX': stats }))); } }}>HEX</b><b onClick={() => { setSelectedToken('pHEX'); if (!tokenStats['pHEX']) { setTokenStats(current => ({ ...current, 'pHEX': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['pHEX']).then(stats => setTokenStats(current => ({ ...current, 'pHEX': stats }))); } }}>pHEX</b><b onClick={() => { setSelectedToken('PLSX'); if (!tokenStats['PLSX']) { setTokenStats(current => ({ ...current, 'PLSX': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['PLSX']).then(stats => setTokenStats(current => ({ ...current, 'PLSX': stats }))); } }}>PLSX</b><b onClick={() => { setSelectedToken('PRVX'); if (!tokenStats['PRVX']) { setTokenStats(current => ({ ...current, 'PRVX': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['PRVX']).then(stats => setTokenStats(current => ({ ...current, 'PRVX': stats }))); } }}>PRVX</b><b onClick={() => { setSelectedToken('INC'); if (!tokenStats['INC']) { setTokenStats(current => ({ ...current, 'INC': { price: 0, change24h: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA['INC']).then(stats => setTokenStats(current => ({ ...current, 'INC': stats }))); } }}>INC</b></div></div>
+          <div className="ecosystem-strip"><span>BUILT FOR THE ECOSYSTEM</span><div>{['ETH', 'PLS', 'HEX', 'pHEX', 'PLSX', 'PRVX', 'INC'].map(sym => (
+            <button key={sym} className={`eco-token-btn ${selectedToken === sym ? 'active' : ''}`} onClick={() => { setSelectedToken(sym); if (!tokenStats[sym]) { setTokenStats(current => ({ ...current, [sym]: { price: 0, change24h: 0, change7d: 0, change30d: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA[sym]).then(stats => setTokenStats(current => ({ ...current, [sym]: stats }))); } }}>
+              <img src={CORE_ICONS[sym] || ''} alt={sym} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}/>
+              <span>{sym}</span>
+            </button>
+          ))}</div></div>
         </div>
 
         <form className={`address-panel ${addressFormOpen ? 'open' : 'collapsed'}`} onSubmit={addWallet}>
@@ -486,24 +497,41 @@ function App() {
                 </div>
                 <div>
                   <h3>{selectedToken}</h3>
-                  <p>{TOKEN_DATA[selectedToken].subtitle}</p>
+                  <div className="token-subtitle-row">
+                    <p>{TOKEN_DATA[selectedToken].subtitle}</p>
+                    <span className={`token-price-change ${(() => {
+                      const stats = tokenStats[selectedToken];
+                      if (!stats) return 'positive';
+                      const change = chartPeriod === '7D' ? stats.change7d : chartPeriod === '30D' ? stats.change30d : stats.change24h;
+                      return change >= 0 ? 'positive' : 'negative';
+                    })()}`}>
+                      {(() => {
+                        const stats = tokenStats[selectedToken];
+                        if (!stats) return '+0.00%';
+                        const change = chartPeriod === '7D' ? stats.change7d : chartPeriod === '30D' ? stats.change30d : stats.change24h;
+                        return `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
+                      })()}
+                    </span>
+                  </div>
                 </div>
               </div>
               <div className="token-panel-price">
-                <span className="token-price-value">{tokenStats[selectedToken]?.price ? money(tokenStats[selectedToken].price) : 'Loading...'}</span>
-                <span className={`token-price-change ${tokenStats[selectedToken]?.change24h >= 0 ? 'positive' : 'negative'}`}>
-                  {tokenStats[selectedToken]?.change24h >= 0 ? '+' : ''}{tokenStats[selectedToken]?.change24h.toFixed(2)}%
-                </span>
+                <span className="token-price-value green-value">{tokenStats[selectedToken]?.price ? money(tokenStats[selectedToken].price) : 'Loading...'}</span>
               </div>
+            </div>
+            <div className="chart-period-selector">
+              {['24H', '7D', '30D', '3M', '6M', '1Y', 'ATL', 'All'].map(p => (
+                <button key={p} className={`chart-period-btn ${chartPeriod === p ? 'active' : ''}`} onClick={() => setChartPeriod(p)}>{p}</button>
+              ))}
             </div>
             <div className="token-stats-row">
               <div className="token-stat">
                 <span>MC</span>
-                <b>{tokenStats[selectedToken]?.marketCap ? `$${tokenStats[selectedToken].marketCap.toFixed(1)}M` : 'N/A'}</b>
+                <b className="green-value">{tokenStats[selectedToken]?.marketCap ? `$${tokenStats[selectedToken].marketCap.toFixed(1)}M` : 'N/A'}</b>
               </div>
               <div className="token-stat">
                 <span>Liquidity</span>
-                <b>{tokenStats[selectedToken]?.liquidity ? `$${tokenStats[selectedToken].liquidity.toFixed(1)}M` : 'N/A'}</b>
+                <b className="green-value">{tokenStats[selectedToken]?.liquidity ? `$${tokenStats[selectedToken].liquidity.toFixed(1)}M` : 'N/A'}</b>
               </div>
               <div className="token-stat">
                 <span>Supply</span>
@@ -513,11 +541,6 @@ function App() {
                 <span>Holders</span>
                 <b>{tokenStats[selectedToken]?.holders || 'N/A'}</b>
               </div>
-            </div>
-            <div className="chart-period-selector">
-              {['24H', '7D', '30D', '3M', '6M', '1Y', 'ATL', 'All'].map(p => (
-                <button key={p} className={`chart-period-btn ${chartPeriod === p ? 'active' : ''}`} onClick={() => setChartPeriod(p)}>{p}</button>
-              ))}
             </div>
             <button className="token-chart-button" onClick={() => setChartOpen(v => !v)}>{chartOpen ? 'Hide Chart' : 'Show Chart'} {chartOpen ? <ChevronDown size={16} style={{ transform: 'rotate(180deg)' }}/> : <ChevronDown size={16}/>}</button>
             {chartOpen && <div className="token-chart-container"><div ref={chartContainerRef} className="token-chart"/></div>}
