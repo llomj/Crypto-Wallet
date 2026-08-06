@@ -70,8 +70,8 @@ const TOKEN_DATA: Record<string, TokenInfo> = {
     subtitle: 'Day: 1180',
     contract: '0xA1077a294dDe1B09bB078844Df40758a5D0f9a27',
     network: 'PulseChain',
-    color: '#A855F7',
-    borderGradient: 'linear-gradient(135deg, #A855F7, #EC4899, #3B82F6)',
+    color: '#00BFFF',
+    borderGradient: 'linear-gradient(135deg, #00BFFF, #8B5CF6, #FF1493)',
   },
   HEX: {
     symbol: 'HEX',
@@ -79,8 +79,8 @@ const TOKEN_DATA: Record<string, TokenInfo> = {
     subtitle: 'Mining Protocol',
     contract: '0x2B591e99afE9f32eAA6214f7B7629768c40Eeb39',
     network: 'Ethereum',
-    color: '#FF6B35',
-    borderGradient: 'linear-gradient(135deg, #FF6B35, #F7931E, #FF2CA8)',
+    color: '#FF8C00',
+    borderGradient: 'linear-gradient(135deg, #FF8C00, #FFD700, #FF1493)',
   },
   PLSX: {
     symbol: 'PLSX',
@@ -88,8 +88,8 @@ const TOKEN_DATA: Record<string, TokenInfo> = {
     subtitle: 'Buy & Burn',
     contract: '0x95B303987A60C71504D99Aa1b13B4DA07b0790ab',
     network: 'PulseChain',
-    color: '#EF4444',
-    borderGradient: 'linear-gradient(135deg, #EF4444, #22C55E)',
+    color: '#00FF00',
+    borderGradient: 'linear-gradient(135deg, #00FF00, #FF0000)',
   },
   PRVX: {
     symbol: 'PRVX',
@@ -97,8 +97,8 @@ const TOKEN_DATA: Record<string, TokenInfo> = {
     subtitle: 'ProveX',
     contract: '0x736F478e5C9A6e7e6f5e5e5e5e5e5e5e5e5e5e5e',
     network: 'PulseChain',
-    color: '#8B5CF6',
-    borderGradient: 'linear-gradient(135deg, #8B5CF6, #F59E0B, #EC4899)',
+    color: '#FF8C00',
+    borderGradient: 'linear-gradient(135deg, #FF8C00, #8B5CF6, #FF1493)',
   },
   INC: {
     symbol: 'INC',
@@ -106,8 +106,8 @@ const TOKEN_DATA: Record<string, TokenInfo> = {
     subtitle: 'Incentive',
     contract: '0x736F478e5C9A6e7e6f5e5e5e5e5e5e5e5e5e5e5f',
     network: 'PulseChain',
-    color: '#10B981',
-    borderGradient: 'linear-gradient(135deg, #10B981, #34D399)',
+    color: '#00FF00',
+    borderGradient: 'linear-gradient(135deg, #00FF00, #00CC00)',
   },
   pHEX: {
     symbol: 'pHEX',
@@ -115,8 +115,8 @@ const TOKEN_DATA: Record<string, TokenInfo> = {
     subtitle: 'Mining Protocol',
     contract: '0x2B591e99afE9f32eAA6214f7B7629768c40Eeb39',
     network: 'PulseChain',
-    color: '#FF6B35',
-    borderGradient: 'linear-gradient(135deg, #FF6B35, #F7931E, #FF2CA8)',
+    color: '#FF8C00',
+    borderGradient: 'linear-gradient(135deg, #FF8C00, #FFD700, #FF1493)',
   },
 };
 
@@ -400,8 +400,8 @@ function App() {
         </form>
 
         {selectedToken && TOKEN_DATA[selectedToken] && <div className="token-detail-panel">
-          <div className="token-panel-glow" style={{ background: TOKEN_DATA[selectedToken].color + '28' }}/>
-          <div className="token-panel-content" style={{ borderColor: TOKEN_DATA[selectedToken].color }}>
+          <div className="token-panel-glow" style={{ background: TOKEN_DATA[selectedToken].borderGradient, opacity: 0.15 }}/>
+          <div className="token-panel-content" style={{ background: `linear-gradient(#0c0910,#08060b) padding-box, ${TOKEN_DATA[selectedToken].borderGradient} border-box`, border: '2px solid transparent', boxShadow: `0 24px 70px #000, 0 0 45px ${TOKEN_DATA[selectedToken].color}22` }}>
             <div className="token-panel-header">
               <div className="token-panel-title">
                 <div className="token-icon" style={{ background: TOKEN_DATA[selectedToken].borderGradient }}>
