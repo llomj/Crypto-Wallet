@@ -314,15 +314,21 @@ async function loadChainPortfolio(address: string, network: ChainNetwork): Promi
   const base = network === 'PulseChain' ? 'https://api.scan.pulsechain.com' : 'https://eth.blockscout.com';
   const nativeSymbol = network === 'PulseChain' ? 'PLS' : 'ETH';
   const nativeName = network === 'PulseChain' ? 'PulseChain' : 'Ethereum';
-  try {
-    const [addressData, tokenData] = await Promise.all([
-      jsonRequest(`${base}/api/v2/addresses/${address}`),
-      jsonRequest(`${base}/api/v2/addresses/${address}/token-balances`),
-    ]);
-    const nativeAmount = formatUnits(String(addressData.coin_balance ?? '0'), 18);
-    const nativePrice = addressData.exchange_rate === null || addressData.exchange_rate === undefined ? null : Number(addressData.exchange_rate);
-    const assets: Asset[] = [{ id: `${network}-native`, symbol: nativeSymbol, name: nativeName, amount: nativeAmount, price: nativePrice, value: nativePrice === null ? null : Number(nativeAmount) * nativePrice, icon: null, network, native: true, decimals: 18 }];
-    for (const item of Array.isArray(tokenData) ? tokenData : []) {
+  const nativeRpc = rpcRequest<string>(network, 'eth_getBalance', [address, 'latest']).catch(() => null);
+  const [addressResult, tokenResult, nativeResult] = await Promise.allSettled([
+    jsonRequest(`${base}/api/v2/addresses/${address}`),
+    jsonRequest(`${base}/api/v2/addresses/${address}/token-balances`),
+    nativeRpc,
+  ]);
+  const addressData = addressResult.status === 'fulfilled' ? addressResult.value : null;
+  const rpcHex = nativeResult.status === 'fulfilled' ? nativeResult.value : null;
+  const nativeAmount = rpcHex ? hexQuantityToUnits(rpcHex, 18) : formatUnits(String(addressData?.coin_balance ?? '0'), 18);
+  const indexedNativePrice = addressData?.exchange_rate;
+  const nativePrice = indexedNativePrice === null || indexedNativePrice === undefined ? null : Number(indexedNativePrice);
+  const assets: Asset[] = [{ id: `${network}-native`, symbol: nativeSymbol, name: nativeName, amount: nativeAmount, price: nativePrice, value: nativePrice === null ? null : Number(nativeAmount) * nativePrice, icon: null, network, native: true, decimals: 18 }];
+
+  if (tokenResult.status === 'fulfilled') {
+    for (const item of Array.isArray(tokenResult.value) ? tokenResult.value : []) {
       const token = item.token ?? {};
       if (token.type && token.type !== 'ERC-20') continue;
       const decimals = Number(token.decimals ?? 18);
@@ -331,21 +337,18 @@ async function loadChainPortfolio(address: string, network: ChainNetwork): Promi
       const price = token.exchange_rate === null || token.exchange_rate === undefined ? null : Number(token.exchange_rate);
       assets.push({ id: token.address_hash ?? token.address ?? `${token.symbol}-${assets.length}`, symbol: token.symbol || 'TOKEN', name: token.name || 'Unknown token', amount, price, value: price === null ? null : Number(amount) * price, icon: token.icon_url || null, network, decimals: Number.isFinite(decimals) ? decimals : 18 });
     }
-    return await enrichMarketAssets(await readRpcBalances(address, network, assets), network);
-  } catch {
-    const [nativeData, tokensData] = await Promise.all([
-      jsonRequest(`${base}/api?module=account&action=balance&address=${address}`),
-      jsonRequest(`${base}/api?module=account&action=tokenlist&address=${address}`),
-    ]);
-    const nativeAmount = formatUnits(String(nativeData.result ?? '0'), 18);
-    const assets: Asset[] = [{ id: `${network}-native`, symbol: nativeSymbol, name: nativeName, amount: nativeAmount, price: null, value: null, icon: null, network, native: true, decimals: 18 }];
-    for (const token of Array.isArray(tokensData.result) ? tokensData.result : []) {
-      const amount = formatUnits(String(token.balance ?? '0'), Number(token.decimals ?? 18));
-      if (Number(amount) === 0) continue;
-      assets.push({ id: token.contractAddress ?? `${token.symbol}-${assets.length}`, symbol: token.symbol || 'TOKEN', name: token.name || 'Unknown token', amount, price: null, value: null, icon: null, network, decimals: Number(token.decimals ?? 18) });
-    }
-    return await enrichMarketAssets(await readRpcBalances(address, network, assets), network);
+  } else {
+    try {
+      const tokensData = await jsonRequest(`${base}/api?module=account&action=tokenlist&address=${address}`);
+      for (const token of Array.isArray(tokensData.result) ? tokensData.result : []) {
+        const decimals = Number(token.decimals ?? 18);
+        const amount = formatUnits(String(token.balance ?? '0'), Number.isFinite(decimals) ? decimals : 18);
+        if (Number(amount) === 0) continue;
+        assets.push({ id: token.contractAddress ?? `${token.symbol}-${assets.length}`, symbol: token.symbol || 'TOKEN', name: token.name || 'Unknown token', amount, price: null, value: null, icon: null, network, decimals: Number.isFinite(decimals) ? decimals : 18 });
+      }
+    } catch { /* Native RPC value still renders when token discovery is unavailable. */ }
   }
+  return enrichMarketAssets(await readRpcBalances(address, network, assets), network);
 }
 
 async function loadPortfolio(wallet: TrackedWallet): Promise<Asset[]> {
@@ -464,13 +467,22 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
 }
 
 async function fetchDefiLlamaChart(token: TokenInfo, period: string, cutoff: number) {
-  if (!['1Y', 'ATL', 'All'].includes(period)) return [];
+  if (period === '24H') return [];
   try {
     const chain = token.network === 'Ethereum' ? 'ethereum' : 'pulsechain';
     const coin = `${chain}:${token.contract}`;
-    const weekly = period === 'ATL' || period === 'All';
-    const span = weekly ? 500 : 365;
-    const data = await jsonRequest(`https://coins.llama.fi/chart/${coin}?start=${cutoff}&span=${span}&period=${weekly ? '1w' : '1d'}&searchWidth=${weekly ? '3d' : '12h'}`, 20000);
+    const ranges: Record<string, { span: number; interval: string; width: string }> = {
+      '7D': { span: 168, interval: '1h', width: '2h' },
+      '30D': { span: 180, interval: '4h', width: '6h' },
+      '3M': { span: 180, interval: '12h', width: '12h' },
+      '6M': { span: 180, interval: '1d', width: '12h' },
+      '1Y': { span: 365, interval: '1d', width: '12h' },
+      ATL: { span: 500, interval: '1w', width: '3d' },
+      All: { span: 500, interval: '1w', width: '3d' },
+    };
+    const range = ranges[period];
+    if (!range) return [];
+    const data = await jsonRequest(`https://coins.llama.fi/chart/${coin}?start=${cutoff}&span=${range.span}&period=${range.interval}&searchWidth=${range.width}`, 20000);
     const coinData = data?.coins?.[coin] ?? Object.values(data?.coins ?? {})[0] as any;
     return (Array.isArray(coinData?.prices) ? coinData.prices : [])
       .map((point: any) => ({ time: Number(point.timestamp), value: Number(point.price) }))
@@ -799,7 +811,7 @@ function App() {
               </div>
               <div className="chart-period-selector">
                 {['24H', '7D', '30D', '3M', '6M', '1Y', 'ATL', 'All'].map(p => (
-                  <button key={p} className={`chart-period-btn ${chartPeriod === p ? 'active' : ''}`} onClick={() => { setChartPercentage(fallbackPercentage(tokenStats[selectedToken], p)); setChartPeriod(p); }}>{p}</button>
+                  <button key={p} className={`chart-period-btn ${chartPeriod === p ? 'active' : ''}`} onClick={() => { setChartPercentage(fallbackPercentage(tokenStats[selectedToken], p)); setChartPeriod(p); setChartOpen(true); }}>{p}</button>
                 ))}
               </div>
               <div className="token-stats-row">
