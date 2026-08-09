@@ -8,7 +8,7 @@ type ChainNetwork = 'PulseChain' | 'Ethereum';
 type Network = ChainNetwork | 'Both';
 type TrackedWallet = { id: string; label: string; address: string; network: Network; groupId?: string };
 type WalletGroup = { id: string; name: string };
-type Asset = { id: string; symbol: string; name: string; amount: string; price: number | null; value: number | null; icon: string | null; native?: boolean; decimals?: number };
+type Asset = { id: string; symbol: string; name: string; amount: string; price: number | null; value: number | null; icon: string | null; network: ChainNetwork; native?: boolean; decimals?: number };
 type Portfolio = { assets: Asset[]; loading: boolean; error: string; refreshedAt: number | null };
 type TokenStats = {
   price: number;
@@ -37,6 +37,9 @@ const RPC_URLS: Record<ChainNetwork, string[]> = {
 };
 const GECKO_NETWORK: Record<ChainNetwork, string> = { PulseChain: 'pulsechain', Ethereum: 'eth' };
 const ETH_USD_FEED = '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419';
+const chartRequestCache = new Map<string, Promise<{ time: number; value: number }[]>>();
+let geckoRequestQueue: Promise<unknown> = Promise.resolve();
+let lastGeckoRequestAt = 0;
 const CORE_ICONS: Record<string, string> = {
   ETH: `${import.meta.env.BASE_URL}token-icons/eth.png`,
   PLS: `${import.meta.env.BASE_URL}token-icons/pls.png`,
@@ -176,14 +179,37 @@ function money(value: number | null) {
   if (value > 0 && value < 0.01) return `$${value.toPrecision(3)}`;
   return `$${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 }
-async function jsonRequest(url: string, timeout = 16000) {
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), timeout);
-  try {
-    const response = await fetch(url, { signal: controller.signal, headers: { Accept: 'application/json' } });
-    if (!response.ok) throw new Error(`Data service returned ${response.status}`);
-    return await response.json();
-  } finally { window.clearTimeout(timer); }
+async function jsonRequest(url: string, timeout = 16000, attempts = 2): Promise<any> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), timeout);
+    try {
+      const response = await fetch(url, { signal: controller.signal, headers: { Accept: 'application/json' } });
+      if (response.status === 429 && attempt + 1 < attempts) {
+        const retrySeconds = Number(response.headers.get('retry-after') ?? 2);
+        await new Promise(resolve => window.setTimeout(resolve, Math.max(1500, retrySeconds * 1000)));
+        continue;
+      }
+      if (!response.ok) throw new Error(`Data service returned ${response.status}`);
+      return await response.json();
+    } catch (error) {
+      lastError = error;
+      if (attempt + 1 < attempts) await new Promise(resolve => window.setTimeout(resolve, 700 * (attempt + 1)));
+    } finally { window.clearTimeout(timer); }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Data request failed');
+}
+
+function geckoRequest(url: string, timeout = 16000) {
+  const request = geckoRequestQueue.then(async () => {
+    const wait = Math.max(0, 1100 - (Date.now() - lastGeckoRequestAt));
+    if (wait) await new Promise(resolve => window.setTimeout(resolve, wait));
+    lastGeckoRequestAt = Date.now();
+    return jsonRequest(url, timeout, 4);
+  });
+  geckoRequestQueue = request.catch(() => undefined);
+  return request;
 }
 
 async function rpcRequest<T>(network: ChainNetwork, method: string, params: unknown[], timeout = 12000): Promise<T> {
@@ -264,7 +290,7 @@ async function enrichMarketAssets(assets: Asset[], network: ChainNetwork) {
   const missing = contracts.filter(item => !enriched.has(item.asset.id));
   if (missing.length) {
     try {
-      const data = await jsonRequest(`https://api.geckoterminal.com/api/v2/simple/networks/${GECKO_NETWORK[network]}/token_price/${missing.map(item => item.contract).join(',')}`, 10000);
+      const data = await geckoRequest(`https://api.geckoterminal.com/api/v2/simple/networks/${GECKO_NETWORK[network]}/token_price/${missing.map(item => item.contract).join(',')}`, 10000);
       const prices = data?.data?.attributes?.token_prices ?? {};
       for (const item of missing) {
         const price = Number(prices[item.contract.toLowerCase()] ?? prices[item.contract]);
@@ -295,7 +321,7 @@ async function loadChainPortfolio(address: string, network: ChainNetwork): Promi
     ]);
     const nativeAmount = formatUnits(String(addressData.coin_balance ?? '0'), 18);
     const nativePrice = addressData.exchange_rate === null || addressData.exchange_rate === undefined ? null : Number(addressData.exchange_rate);
-    const assets: Asset[] = [{ id: `${network}-native`, symbol: nativeSymbol, name: nativeName, amount: nativeAmount, price: nativePrice, value: nativePrice === null ? null : Number(nativeAmount) * nativePrice, icon: null, native: true, decimals: 18 }];
+    const assets: Asset[] = [{ id: `${network}-native`, symbol: nativeSymbol, name: nativeName, amount: nativeAmount, price: nativePrice, value: nativePrice === null ? null : Number(nativeAmount) * nativePrice, icon: null, network, native: true, decimals: 18 }];
     for (const item of Array.isArray(tokenData) ? tokenData : []) {
       const token = item.token ?? {};
       if (token.type && token.type !== 'ERC-20') continue;
@@ -303,7 +329,7 @@ async function loadChainPortfolio(address: string, network: ChainNetwork): Promi
       const amount = formatUnits(String(item.value ?? '0'), Number.isFinite(decimals) ? decimals : 18);
       if (Number(amount) === 0) continue;
       const price = token.exchange_rate === null || token.exchange_rate === undefined ? null : Number(token.exchange_rate);
-      assets.push({ id: token.address_hash ?? token.address ?? `${token.symbol}-${assets.length}`, symbol: token.symbol || 'TOKEN', name: token.name || 'Unknown token', amount, price, value: price === null ? null : Number(amount) * price, icon: token.icon_url || null, decimals: Number.isFinite(decimals) ? decimals : 18 });
+      assets.push({ id: token.address_hash ?? token.address ?? `${token.symbol}-${assets.length}`, symbol: token.symbol || 'TOKEN', name: token.name || 'Unknown token', amount, price, value: price === null ? null : Number(amount) * price, icon: token.icon_url || null, network, decimals: Number.isFinite(decimals) ? decimals : 18 });
     }
     return await enrichMarketAssets(await readRpcBalances(address, network, assets), network);
   } catch {
@@ -312,11 +338,11 @@ async function loadChainPortfolio(address: string, network: ChainNetwork): Promi
       jsonRequest(`${base}/api?module=account&action=tokenlist&address=${address}`),
     ]);
     const nativeAmount = formatUnits(String(nativeData.result ?? '0'), 18);
-    const assets: Asset[] = [{ id: `${network}-native`, symbol: nativeSymbol, name: nativeName, amount: nativeAmount, price: null, value: null, icon: null, native: true, decimals: 18 }];
+    const assets: Asset[] = [{ id: `${network}-native`, symbol: nativeSymbol, name: nativeName, amount: nativeAmount, price: null, value: null, icon: null, network, native: true, decimals: 18 }];
     for (const token of Array.isArray(tokensData.result) ? tokensData.result : []) {
       const amount = formatUnits(String(token.balance ?? '0'), Number(token.decimals ?? 18));
       if (Number(amount) === 0) continue;
-      assets.push({ id: token.contractAddress ?? `${token.symbol}-${assets.length}`, symbol: token.symbol || 'TOKEN', name: token.name || 'Unknown token', amount, price: null, value: null, icon: null, decimals: Number(token.decimals ?? 18) });
+      assets.push({ id: token.contractAddress ?? `${token.symbol}-${assets.length}`, symbol: token.symbol || 'TOKEN', name: token.name || 'Unknown token', amount, price: null, value: null, icon: null, network, decimals: Number(token.decimals ?? 18) });
     }
     return await enrichMarketAssets(await readRpcBalances(address, network, assets), network);
   }
@@ -393,7 +419,7 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
     if (price === 0) {
       try {
         const chain = token.network === 'Ethereum' ? 'eth' : 'pulsechain';
-        const gtData = await jsonRequest(`https://api.geckoterminal.com/api/v2/simple/networks/${chain}/token_price/${token.contract}`, 10000);
+        const gtData = await geckoRequest(`https://api.geckoterminal.com/api/v2/simple/networks/${chain}/token_price/${token.contract}`, 10000);
         price = Number(gtData?.data?.attributes?.token_prices?.[token.contract.toLowerCase()] ?? 0);
       } catch { /* CoinGecko is the final fallback. */ }
     }
@@ -416,18 +442,8 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
       marketCap = price * supplyNum;
     }
 
-    // Seed period % from chart series so 7D/30D work immediately
-    try {
-      const [series7, series30] = await Promise.all([
-        fetchChartOHLCV(token, '7D'),
-        fetchChartOHLCV(token, '30D'),
-      ]);
-      change7d = percentFromSeries(series7) || change24h;
-      change30d = percentFromSeries(series30) || change24h;
-    } catch {
-      change7d = change24h;
-      change30d = change24h;
-    }
+    change7d = change24h;
+    change30d = change24h;
     
     return { 
       price, 
@@ -447,43 +463,88 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
   }
 }
 
-async function fetchChartOHLCV(token: TokenInfo, period: string): Promise<{ time: number; value: number }[]> {
-  const network: ChainNetwork = token.network === 'Ethereum' ? 'Ethereum' : 'PulseChain';
-  const now = Math.floor(Date.now() / 1000);
-  const periodSeconds: Record<string, number> = { '24H': 86400, '7D': 604800, '30D': 2592000, '3M': 7776000, '6M': 15552000, '1Y': 31536000, 'ATL': 315360000, 'All': 315360000 };
-  const cutoff = now - (periodSeconds[period] || 2592000);
-
-  // Primary: OHLCV reconstructed from on-chain DEX pool swaps by GeckoTerminal.
+async function fetchDefiLlamaChart(token: TokenInfo, period: string, cutoff: number) {
+  if (!['1Y', 'ATL', 'All'].includes(period)) return [];
   try {
-    const poolsData = await jsonRequest(`https://api.geckoterminal.com/api/v2/networks/${GECKO_NETWORK[network]}/tokens/${token.contract}/pools?page=1`, 15000);
+    const chain = token.network === 'Ethereum' ? 'ethereum' : 'pulsechain';
+    const coin = `${chain}:${token.contract}`;
+    const weekly = period === 'ATL' || period === 'All';
+    const span = weekly ? 500 : 365;
+    const data = await jsonRequest(`https://coins.llama.fi/chart/${coin}?start=${cutoff}&span=${span}&period=${weekly ? '1w' : '1d'}&searchWidth=${weekly ? '3d' : '12h'}`, 20000);
+    const coinData = data?.coins?.[coin] ?? Object.values(data?.coins ?? {})[0] as any;
+    return (Array.isArray(coinData?.prices) ? coinData.prices : [])
+      .map((point: any) => ({ time: Number(point.timestamp), value: Number(point.price) }))
+      .filter((point: { time: number; value: number }) => point.time >= cutoff && point.value > 0)
+      .sort((left: { time: number }, right: { time: number }) => left.time - right.time);
+  } catch { return []; }
+}
+
+async function fetchDexPoolChart(token: TokenInfo, period: string, cutoff: number) {
+  const network: ChainNetwork = token.network === 'Ethereum' ? 'Ethereum' : 'PulseChain';
+  try {
+    const poolsData = await geckoRequest(`https://api.geckoterminal.com/api/v2/networks/${GECKO_NETWORK[network]}/tokens/${token.contract}/pools?page=1`, 15000);
     const pools = Array.isArray(poolsData?.data) ? poolsData.data.slice(0, 3) : [];
     const timeframe = period === '24H' ? 'minute' : period === '7D' || period === '30D' ? 'hour' : 'day';
     const aggregate = period === '24H' ? 15 : period === '30D' ? 4 : 1;
     const limitMap: Record<string, number> = { '24H': 96, '7D': 168, '30D': 180, '3M': 100, '6M': 190, '1Y': 370, ATL: 1000, All: 1000 };
+    // The keyless pool endpoint is rate-limited and serves six months per page.
+    // Four pages cover two years for unlisted tokens without leaving the UI stuck.
+    const maxPages = period === '1Y' ? 2 : period === 'ATL' || period === 'All' ? 4 : 1;
+    let best: { time: number; value: number }[] = [];
     for (const pool of pools) {
       const poolAddress = pool?.attributes?.address || String(pool?.id || '').split('_').pop();
       if (!validAddress(poolAddress || '')) continue;
-      const baseId = String(pool?.relationships?.base_token?.data?.id || '').toLowerCase();
-      const tokenSide = baseId.endsWith(token.contract.toLowerCase()) ? 'base' : 'quote';
+      // Passing the contract itself is unambiguous even when pool metadata uses
+      // provider-specific relationship IDs instead of an address suffix.
+      const tokenSide = token.contract;
+      const poolPoints = new Map<number, number>();
+      let beforeTimestamp: number | null = null;
       try {
-        const ohlcv = await jsonRequest(`https://api.geckoterminal.com/api/v2/networks/${GECKO_NETWORK[network]}/pools/${poolAddress}/ohlcv/${timeframe}?aggregate=${aggregate}&limit=${limitMap[period] || 180}&currency=usd&token=${tokenSide}`, 15000);
-        const points = (Array.isArray(ohlcv?.data?.attributes?.ohlcv_list) ? ohlcv.data.attributes.ohlcv_list : [])
-          .map((candle: any[]) => ({ time: Number(candle[0]), value: Number(candle[4]) }))
-          .filter((point: { time: number; value: number }) => point.time >= cutoff && point.value > 0)
-          .sort((left: { time: number }, right: { time: number }) => left.time - right.time);
+        for (let page = 0; page < maxPages; page += 1) {
+          const before = beforeTimestamp ? `&before_timestamp=${beforeTimestamp}` : '';
+          const ohlcv = await geckoRequest(`https://api.geckoterminal.com/api/v2/networks/${GECKO_NETWORK[network]}/pools/${poolAddress}/ohlcv/${timeframe}?aggregate=${aggregate}&limit=${limitMap[period] || 180}&currency=usd&token=${tokenSide}${before}`, 15000);
+          const candles = Array.isArray(ohlcv?.data?.attributes?.ohlcv_list) ? ohlcv.data.attributes.ohlcv_list : [];
+          if (!candles.length) break;
+          for (const candle of candles) {
+            const time = Number(candle[0]);
+            const value = Number(candle[4]);
+            if (time >= cutoff && value > 0) poolPoints.set(time, value);
+          }
+          const oldest = Math.min(...candles.map((candle: any[]) => Number(candle[0])));
+          const paginationStalled = beforeTimestamp !== null && oldest >= beforeTimestamp;
+          if (!Number.isFinite(oldest) || oldest <= cutoff || paginationStalled) break;
+          beforeTimestamp = oldest - 1;
+          await new Promise(resolve => window.setTimeout(resolve, 250));
+        }
+        const points = [...poolPoints].map(([time, value]) => ({ time, value })).sort((left, right) => left.time - right.time);
+        if (points.length > best.length || (points[0]?.time ?? Infinity) < (best[0]?.time ?? Infinity)) best = points;
         if (points.length >= 2) return points;
       } catch { /* Try the next liquid pool. */ }
     }
+    return best;
   } catch { /* fall through */ }
+  return [];
+}
 
-  // Fallback: CoinGecko market chart
+async function fetchChartOHLCVUncached(token: TokenInfo, period: string): Promise<{ time: number; value: number }[]> {
+  const now = Math.floor(Date.now() / 1000);
+  const periodSeconds: Record<string, number> = { '24H': 86400, '7D': 604800, '30D': 2592000, '3M': 7776000, '6M': 15552000, '1Y': 31536000, 'ATL': 315360000, 'All': 315360000 };
+  const cutoff = now - (periodSeconds[period] || 2592000);
+
+  // Long ranges use contract-address history first; short ranges use pool-swap OHLCV.
+  const broadHistory = await fetchDefiLlamaChart(token, period, cutoff);
+  if (broadHistory.length >= 2) return broadHistory;
+  const dexHistory = await fetchDexPoolChart(token, period, cutoff);
+  if (dexHistory.length >= 2) return dexHistory;
+
+  // Final fallback for listed coins. Public access is intentionally capped at one year.
   try {
     const coinGeckoIds: Record<string, string> = {
       ETH: 'ethereum', PLS: 'pulsechain', HEX: 'hex', pHEX: 'hex', PLSX: 'pulsex', PRVX: 'provex', INC: 'incentive',
     };
     const coinId = coinGeckoIds[token.symbol];
     if (!coinId) return [];
-    const periodDays: Record<string, number | string> = { '24H': 1, '7D': 7, '30D': 30, '3M': 90, '6M': 180, '1Y': 365, ATL: 'max', All: 'max' };
+    const periodDays: Record<string, number> = { '24H': 1, '7D': 7, '30D': 30, '3M': 90, '6M': 180, '1Y': 365 };
     const days = periodDays[period] || 30;
     const data = await jsonRequest(`https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=usd&days=${days}`, 15000);
     if (!data?.prices) return [];
@@ -493,6 +554,21 @@ async function fetchChartOHLCV(token: TokenInfo, period: string): Promise<{ time
   } catch {
     return [];
   }
+}
+
+function fetchChartOHLCV(token: TokenInfo, period: string) {
+  const key = `${token.network}:${token.contract.toLowerCase()}:${period}`;
+  const cached = chartRequestCache.get(key);
+  if (cached) return cached;
+  const request = fetchChartOHLCVUncached(token, period).then(data => {
+    if (data.length < 2) chartRequestCache.delete(key);
+    return data;
+  }).catch(error => {
+    chartRequestCache.delete(key);
+    throw error;
+  });
+  chartRequestCache.set(key, request);
+  return request;
 }
 
 function percentFromSeries(data: { time: number; value: number }[]): number {
@@ -537,6 +613,7 @@ function App() {
   const [chartData, setChartData] = useState<{ time: number; value: number }[]>([]);
   const [chartPercentage, setChartPercentage] = useState<number | null>(0);
   const [chartLoading, setChartLoading] = useState(false);
+  const [chartRetry, setChartRetry] = useState(0);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<any>(null);
@@ -549,21 +626,33 @@ function App() {
 
   useEffect(() => {
     if (!selectedToken || !TOKEN_DATA[selectedToken]) return;
+    if (!chartOpen && chartPeriod === '24H') {
+      setChartData([]);
+      setChartLoading(false);
+      return;
+    }
     const token = TOKEN_DATA[selectedToken];
     let cancelled = false;
     setChartLoading(true);
-    void (async () => {
-      const data = await fetchChartOHLCV(token, chartPeriod);
+    void fetchChartOHLCV(token, chartPeriod).then(data => {
       if (cancelled) return;
       setChartData(data);
       setChartPercentage(data.length >= 2 ? percentFromSeries(data) : fallbackPercentage(tokenStats[selectedToken], chartPeriod));
       setChartLoading(false);
+    }).catch(() => {
+      if (cancelled) return;
+      setChartData([]);
+      setChartPercentage(fallbackPercentage(tokenStats[selectedToken], chartPeriod));
+      setChartLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [selectedToken, chartPeriod, chartRetry, chartOpen]);
 
-      if (!chartOpen || !chartContainerRef.current) return;
-      if (chartRef.current) { chartRef.current.remove(); chartRef.current = null; seriesRef.current = null; }
-      if (!data.length) return;
-
-      const chart = createChart(chartContainerRef.current, {
+  useEffect(() => {
+    if (!chartOpen || !selectedToken || chartData.length < 2 || !chartContainerRef.current) return;
+    const token = TOKEN_DATA[selectedToken];
+    const container = chartContainerRef.current;
+    const chart = createChart(container, {
         width: chartContainerRef.current.clientWidth,
         height: 220,
         layout: { background: { color: '#0a0a0a' }, textColor: '#6f6776', fontSize: 10 },
@@ -573,8 +662,8 @@ function App() {
         crosshair: { vertLine: { visible: false }, horzLine: { visible: false } },
         handleScroll: false,
         handleScale: false,
-      });
-      const series = chart.addSeries(LineSeries, {
+    });
+    const series = chart.addSeries(LineSeries, {
         color: token.color,
         lineWidth: 2,
         lineStyle: LineStyle.Solid,
@@ -582,17 +671,21 @@ function App() {
         priceLineVisible: false,
         crosshairMarkerVisible: true,
         crosshairMarkerRadius: 4,
-      });
-      series.setData(data.map(d => ({ time: d.time as any, value: d.value })));
-      chart.timeScale().fitContent();
-      chartRef.current = chart;
-      seriesRef.current = series;
-    })();
+    });
+    series.setData(chartData.map(point => ({ time: point.time as any, value: point.value })));
+    chart.timeScale().fitContent();
+    chartRef.current = chart;
+    seriesRef.current = series;
+    const observer = new ResizeObserver(entries => {
+      const width = entries[0]?.contentRect.width;
+      if (width) chart.applyOptions({ width });
+    });
+    observer.observe(container);
     return () => {
-      cancelled = true;
+      observer.disconnect();
       if (chartRef.current) { chartRef.current.remove(); chartRef.current = null; seriesRef.current = null; }
     };
-  }, [selectedToken, chartPeriod, chartOpen]);
+  }, [selectedToken, chartData, chartOpen]);
 
   useEffect(() => {
     if (!selectedToken || chartData.length >= 2) return;
@@ -653,6 +746,8 @@ function App() {
   });
   const knownValue = wallets.reduce((total, wallet) => total + (portfolios[wallet.id]?.assets.reduce((walletTotal, asset) => walletTotal + (asset.value ?? 0), 0) ?? 0), 0);
   const selectedValue = selectedPortfolio?.assets.reduce((total, asset) => total + (asset.value ?? 0), 0) ?? 0;
+  const selectedEthereumValue = selectedPortfolio?.assets.reduce((total, asset) => total + (asset.network === 'Ethereum' ? asset.value ?? 0 : 0), 0) ?? 0;
+  const selectedPulseValue = selectedPortfolio?.assets.reduce((total, asset) => total + (asset.network === 'PulseChain' ? asset.value ?? 0 : 0), 0) ?? 0;
   const filteredAssets = selectedPortfolio?.assets.filter(asset => {
     const symbol = tokenKey(asset.symbol);
     const name = tokenKey(asset.name);
@@ -725,8 +820,12 @@ function App() {
                   <b>{tokenStats[selectedToken]?.holders || 'N/A'}</b>
                 </div>
               </div>
-              <button className="token-chart-button" onClick={() => setChartOpen(v => !v)}>{chartOpen ? 'Hide Chart' : 'Show Chart'} {chartOpen ? <ChevronDown size={16} style={{ transform: 'rotate(180deg)' }}/> : <ChevronDown size={16}/>}</button>
-              {chartOpen && <div className="token-chart-container"><div ref={chartContainerRef} className="token-chart"/></div>}
+              <button className="token-chart-button" onClick={() => { const opening = !chartOpen; setChartOpen(opening); if (opening && chartData.length < 2) setChartRetry(value => value + 1); }}>{chartOpen ? 'Hide Chart' : 'Show Chart'} {chartOpen ? <ChevronDown size={16} style={{ transform: 'rotate(180deg)' }}/> : <ChevronDown size={16}/>}</button>
+              {chartOpen && <div className="token-chart-container">
+                {chartLoading ? <div className="chart-status"><RefreshCw size={17} className="spin-icon"/>Building {chartPeriod} chart…</div>
+                  : chartData.length >= 2 ? <div ref={chartContainerRef} className="token-chart" role="img" aria-label={`${selectedToken} ${chartPeriod} price chart`} data-chart-points={chartData.length}/>
+                    : <div className="chart-status">No verified price history is available for this range.</div>}
+              </div>}
               <button className="token-close-button" onClick={() => setSelectedToken(null)}>Close</button>
             </div>
           </div>}
@@ -750,15 +849,15 @@ function App() {
 
       {wallets.length > 0 && <><section className={`tracked-section tracked-panel ${trackedCollapsed ? 'collapsed' : 'open'}`}>
         <div className="tracked-glow"/>
-        <button className="panel-heading panel-fold" onClick={() => setTrackedCollapsed(value => !value)} aria-expanded={!trackedCollapsed}>
+        <div className="panel-heading panel-fold" role="button" tabIndex={0} onClick={() => setTrackedCollapsed(value => !value)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setTrackedCollapsed(value => !value); } }} aria-expanded={!trackedCollapsed}>
           <div className="wallet-orbit"><WalletCards size={24}/></div>
           <div className="panel-heading-text"><p className="eyebrow">PRIVATE WATCHLIST</p><h2>Your tracked wallets</h2></div>
           <button className="panel-action-btn" onClick={(e) => { e.stopPropagation(); setPrivateMode(v => !v); }}>{privateMode ? <EyeOff size={13}/> : <Eye size={13}/>} {privateMode ? 'Reveal' : 'Hide'}</button>
           <ChevronDown size={18}/>
-        </button>
+        </div>
         {!trackedCollapsed && <div className="vault-board">
           <div className="vault-summary">
-            <div className="portfolio-totals"><div><span>TOTAL PORTFOLIO</span><strong>{privateMode ? '••••••' : knownValue > 0 ? money(knownValue) : 'Live assets'}</strong><small>{wallets.length} {wallets.length === 1 ? 'address' : 'addresses'} · all wallets</small></div>{selectedWallet && <div className="selected-total"><span>{selectedWallet.label}</span><strong>{privateMode ? '••••••' : selectedValue > 0 ? money(selectedValue) : 'Live assets'}</strong><small>Selected address value</small></div>}</div>
+            <div className="portfolio-totals"><div><span>TOTAL PORTFOLIO</span><strong>{privateMode ? '••••••' : knownValue > 0 ? money(knownValue) : 'Live assets'}</strong><small>{wallets.length} {wallets.length === 1 ? 'address' : 'addresses'} · all wallets</small></div>{selectedWallet && <div className="selected-total"><span>{selectedWallet.label}</span><strong>{privateMode ? '••••••' : selectedValue > 0 ? money(selectedValue) : 'Live assets'}</strong><small>{privateMode ? 'Network values hidden' : selectedWallet.network === 'Both' ? `ETH ${money(selectedEthereumValue)} · PLS ${money(selectedPulseValue)}` : `${networkLabel(selectedWallet.network)} · all priced coins`}</small></div>}</div>
             {selectedWallet && <button className={`sync-control ${Object.values(portfolios).some(portfolio => portfolio.loading) ? 'spinning' : ''}`} onClick={() => wallets.forEach(wallet => void refreshWallet(wallet))} disabled={Object.values(portfolios).some(portfolio => portfolio.loading)}><RefreshCw size={16}/>{Object.values(portfolios).some(portfolio => portfolio.loading) ? 'Syncing' : 'Sync all'}</button>}
           </div>
           <div className="wallet-groups">
