@@ -8,7 +8,7 @@ type ChainNetwork = 'PulseChain' | 'Ethereum';
 type Network = ChainNetwork | 'Both';
 type TrackedWallet = { id: string; label: string; address: string; network: Network; groupId?: string };
 type WalletGroup = { id: string; name: string };
-type Asset = { id: string; symbol: string; name: string; amount: string; price: number | null; value: number | null; icon: string | null; native?: boolean };
+type Asset = { id: string; symbol: string; name: string; amount: string; price: number | null; value: number | null; icon: string | null; native?: boolean; decimals?: number };
 type Portfolio = { assets: Asset[]; loading: boolean; error: string; refreshedAt: number | null };
 type TokenStats = {
   price: number;
@@ -31,6 +31,12 @@ const WRAPPED_NATIVE: Record<ChainNetwork, string> = {
   PulseChain: '0xA1077a294dDe1B09bB078844Df40758a5D0f9a27',
   Ethereum: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
 };
+const RPC_URLS: Record<ChainNetwork, string[]> = {
+  PulseChain: [import.meta.env.VITE_PULSECHAIN_RPC_URL || 'https://rpc.pulsechain.com'],
+  Ethereum: [import.meta.env.VITE_ETHEREUM_RPC_URL || 'https://ethereum-rpc.publicnode.com'],
+};
+const GECKO_NETWORK: Record<ChainNetwork, string> = { PulseChain: 'pulsechain', Ethereum: 'eth' };
+const ETH_USD_FEED = '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419';
 const CORE_ICONS: Record<string, string> = {
   ETH: `${import.meta.env.BASE_URL}token-icons/eth.png`,
   PLS: `${import.meta.env.BASE_URL}token-icons/pls.png`,
@@ -180,23 +186,96 @@ async function jsonRequest(url: string, timeout = 16000) {
   } finally { window.clearTimeout(timer); }
 }
 
+async function rpcRequest<T>(network: ChainNetwork, method: string, params: unknown[], timeout = 12000): Promise<T> {
+  let lastError: unknown;
+  for (const url of RPC_URLS[network]) {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), timeout);
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+      });
+      if (!response.ok) throw new Error(`RPC returned ${response.status}`);
+      const payload = await response.json();
+      if (payload.error) throw new Error(payload.error.message || 'RPC request failed');
+      return payload.result as T;
+    } catch (error) {
+      lastError = error;
+    } finally {
+      window.clearTimeout(timer);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('RPC request failed');
+}
+
+function hexQuantityToUnits(value: string, decimals = 18) {
+  try { return formatUnits(BigInt(value).toString(), decimals); } catch { return '0'; }
+}
+
+async function readRpcBalances(address: string, network: ChainNetwork, assets: Asset[]) {
+  const nativeBalance = rpcRequest<string>(network, 'eth_getBalance', [address, 'latest']);
+  const addressWord = address.toLowerCase().replace(/^0x/, '').padStart(64, '0');
+  const tokenAssets = assets.filter(asset => !asset.native && validAddress(asset.id)).slice(0, 40);
+  const tokenBalances = Promise.allSettled(tokenAssets.map(asset =>
+    rpcRequest<string>(network, 'eth_call', [{ to: asset.id, data: `0x70a08231${addressWord}` }, 'latest'])
+  ));
+  const [nativeResult, tokenResults] = await Promise.allSettled([nativeBalance, tokenBalances]);
+  const rpcAmounts = new Map<string, string>();
+  if (nativeResult.status === 'fulfilled') rpcAmounts.set('native', hexQuantityToUnits(nativeResult.value));
+  if (tokenResults.status === 'fulfilled') tokenResults.value.forEach((result, index) => {
+    if (result.status !== 'fulfilled') return;
+    const rpcAmount = hexQuantityToUnits(result.value, tokenAssets[index].decimals ?? 18);
+    if (Number.isFinite(Number(rpcAmount))) rpcAmounts.set(tokenAssets[index].id.toLowerCase(), rpcAmount);
+  });
+  return assets.map(asset => {
+    const amount = rpcAmounts.get(asset.native ? 'native' : asset.id.toLowerCase()) ?? asset.amount;
+    return { ...asset, amount, value: asset.price === null ? null : Number(amount) * asset.price };
+  });
+}
+
+async function ethereumOraclePrice() {
+  try {
+    const result = await rpcRequest<string>('Ethereum', 'eth_call', [{ to: ETH_USD_FEED, data: '0xfeaf968c' }, 'latest']);
+    const words = result.replace(/^0x/, '').match(/.{64}/g) ?? [];
+    if (words.length < 2) return null;
+    const answer = Number(BigInt(`0x${words[1]}`)) / 1e8;
+    return answer > 0 && Number.isFinite(answer) ? answer : null;
+  } catch { return null; }
+}
+
 async function enrichMarketAssets(assets: Asset[], network: ChainNetwork) {
   const chainId = network === 'PulseChain' ? 'pulsechain' : 'ethereum';
   const prioritized = [...assets.filter(asset => FEATURED_SYMBOLS.has(tokenKey(asset.symbol))), ...assets];
-  const unique = prioritized.filter((asset, index, list) => list.findIndex(item => item.id.toLowerCase() === asset.id.toLowerCase()) === index).slice(0, 40);
+  const unique = prioritized.filter((asset, index, list) => list.findIndex(item => item.id.toLowerCase() === asset.id.toLowerCase()) === index).slice(0, 30);
   const enriched = new Map<string, { price: number; icon: string | null }>();
-  for (let start = 0; start < unique.length; start += 5) {
-    const group = unique.slice(start, start + 5);
-    const results = await Promise.allSettled(group.map(async asset => {
-      const contract = asset.native ? WRAPPED_NATIVE[network] : asset.id;
-      if (!validAddress(contract)) return null;
-      const data = await jsonRequest(`https://api.dexscreener.com/latest/dex/tokens/${contract}`, 10000);
-      const pairs = (Array.isArray(data.pairs) ? data.pairs : []).filter((pair: any) => pair.chainId === chainId && pair.baseToken?.address?.toLowerCase() === contract.toLowerCase() && Number(pair.priceUsd) > 0);
-      const pair = pairs.sort((left: any, right: any) => Number(right.liquidity?.usd ?? 0) - Number(left.liquidity?.usd ?? 0))[0];
-      if (!pair) return null;
-      return { id: asset.id, price: Number(pair.priceUsd), icon: typeof pair.info?.imageUrl === 'string' ? pair.info.imageUrl : null };
-    }));
-    for (const result of results) if (result.status === 'fulfilled' && result.value) enriched.set(result.value.id, { price: result.value.price, icon: result.value.icon });
+  const contracts = unique.map(asset => ({ asset, contract: asset.native ? WRAPPED_NATIVE[network] : asset.id })).filter(item => validAddress(item.contract));
+  try {
+    const data = await jsonRequest(`https://api.dexscreener.com/latest/dex/tokens/${contracts.map(item => item.contract).join(',')}`, 10000);
+    const pairs = (Array.isArray(data.pairs) ? data.pairs : []).filter((pair: any) => pair.chainId === chainId && Number(pair.priceUsd) > 0);
+    for (const item of contracts) {
+      const pair = pairs.filter((candidate: any) => candidate.baseToken?.address?.toLowerCase() === item.contract.toLowerCase())
+        .sort((left: any, right: any) => Number(right.liquidity?.usd ?? 0) - Number(left.liquidity?.usd ?? 0))[0];
+      if (pair) enriched.set(item.asset.id, { price: Number(pair.priceUsd), icon: typeof pair.info?.imageUrl === 'string' ? pair.info.imageUrl : null });
+    }
+  } catch { /* GeckoTerminal is the next DEX-data source. */ }
+  const missing = contracts.filter(item => !enriched.has(item.asset.id));
+  if (missing.length) {
+    try {
+      const data = await jsonRequest(`https://api.geckoterminal.com/api/v2/simple/networks/${GECKO_NETWORK[network]}/token_price/${missing.map(item => item.contract).join(',')}`, 10000);
+      const prices = data?.data?.attributes?.token_prices ?? {};
+      for (const item of missing) {
+        const price = Number(prices[item.contract.toLowerCase()] ?? prices[item.contract]);
+        if (price > 0) enriched.set(item.asset.id, { price, icon: null });
+      }
+    } catch { /* Keep explorer price, or show unavailable, if both DEX sources fail. */ }
+  }
+  if (network === 'Ethereum') {
+    const oraclePrice = await ethereumOraclePrice();
+    const native = unique.find(asset => asset.native);
+    if (native && oraclePrice) enriched.set(native.id, { price: oraclePrice, icon: enriched.get(native.id)?.icon ?? null });
   }
   return assets.map(asset => {
     const market = enriched.get(asset.id);
@@ -216,7 +295,7 @@ async function loadChainPortfolio(address: string, network: ChainNetwork): Promi
     ]);
     const nativeAmount = formatUnits(String(addressData.coin_balance ?? '0'), 18);
     const nativePrice = addressData.exchange_rate === null || addressData.exchange_rate === undefined ? null : Number(addressData.exchange_rate);
-    const assets: Asset[] = [{ id: `${network}-native`, symbol: nativeSymbol, name: nativeName, amount: nativeAmount, price: nativePrice, value: nativePrice === null ? null : Number(nativeAmount) * nativePrice, icon: null, native: true }];
+    const assets: Asset[] = [{ id: `${network}-native`, symbol: nativeSymbol, name: nativeName, amount: nativeAmount, price: nativePrice, value: nativePrice === null ? null : Number(nativeAmount) * nativePrice, icon: null, native: true, decimals: 18 }];
     for (const item of Array.isArray(tokenData) ? tokenData : []) {
       const token = item.token ?? {};
       if (token.type && token.type !== 'ERC-20') continue;
@@ -224,22 +303,22 @@ async function loadChainPortfolio(address: string, network: ChainNetwork): Promi
       const amount = formatUnits(String(item.value ?? '0'), Number.isFinite(decimals) ? decimals : 18);
       if (Number(amount) === 0) continue;
       const price = token.exchange_rate === null || token.exchange_rate === undefined ? null : Number(token.exchange_rate);
-      assets.push({ id: token.address_hash ?? token.address ?? `${token.symbol}-${assets.length}`, symbol: token.symbol || 'TOKEN', name: token.name || 'Unknown token', amount, price, value: price === null ? null : Number(amount) * price, icon: token.icon_url || null });
+      assets.push({ id: token.address_hash ?? token.address ?? `${token.symbol}-${assets.length}`, symbol: token.symbol || 'TOKEN', name: token.name || 'Unknown token', amount, price, value: price === null ? null : Number(amount) * price, icon: token.icon_url || null, decimals: Number.isFinite(decimals) ? decimals : 18 });
     }
-    return await enrichMarketAssets(assets, network);
+    return await enrichMarketAssets(await readRpcBalances(address, network, assets), network);
   } catch {
     const [nativeData, tokensData] = await Promise.all([
       jsonRequest(`${base}/api?module=account&action=balance&address=${address}`),
       jsonRequest(`${base}/api?module=account&action=tokenlist&address=${address}`),
     ]);
     const nativeAmount = formatUnits(String(nativeData.result ?? '0'), 18);
-    const assets: Asset[] = [{ id: `${network}-native`, symbol: nativeSymbol, name: nativeName, amount: nativeAmount, price: null, value: null, icon: null, native: true }];
+    const assets: Asset[] = [{ id: `${network}-native`, symbol: nativeSymbol, name: nativeName, amount: nativeAmount, price: null, value: null, icon: null, native: true, decimals: 18 }];
     for (const token of Array.isArray(tokensData.result) ? tokensData.result : []) {
       const amount = formatUnits(String(token.balance ?? '0'), Number(token.decimals ?? 18));
       if (Number(amount) === 0) continue;
-      assets.push({ id: token.contractAddress ?? `${token.symbol}-${assets.length}`, symbol: token.symbol || 'TOKEN', name: token.name || 'Unknown token', amount, price: null, value: null, icon: null });
+      assets.push({ id: token.contractAddress ?? `${token.symbol}-${assets.length}`, symbol: token.symbol || 'TOKEN', name: token.name || 'Unknown token', amount, price: null, value: null, icon: null, decimals: Number(token.decimals ?? 18) });
     }
-    return await enrichMarketAssets(assets, network);
+    return await enrichMarketAssets(await readRpcBalances(address, network, assets), network);
   }
 }
 
@@ -283,7 +362,7 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
       holders = holderCount >= 1000 ? compactAmount(String(holderCount), 1) : holderCount.toLocaleString();
     }
     
-    // Get price data - DexScreener primary, CoinGecko fallback
+    // USD price order: on-chain oracle, DEX-derived data, then CoinGecko last.
     let price = 0;
     let liquidity = 0;
     let marketCap = 0;
@@ -291,6 +370,7 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
     let change7d = 0;
     let change30d = 0;
     
+    const oraclePrice = token.symbol === 'ETH' ? await ethereumOraclePrice() : null;
     try {
       const chainId = token.network === 'PulseChain' ? 'pulsechain' : 'ethereum';
       const dexData = await jsonRequest(`https://api.dexscreener.com/latest/dex/tokens/${token.contract}`, 10000);
@@ -308,24 +388,26 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
         marketCap = fdv > 0 ? fdv : liquidity * 10;
         change24h = Number(pair.priceChange?.h24 ?? 0);
       }
-    } catch (e) {
-      console.log('DexScreener failed, trying CoinGecko fallback:', e);
+    } catch { /* GeckoTerminal is the next DEX-data source. */ }
+    if (oraclePrice) price = oraclePrice;
+    if (price === 0) {
       try {
-        const coinGeckoIds: Record<string, string> = {
-          ETH: 'ethereum', PLS: 'pulsechain', HEX: 'hex', pHEX: 'hex', PLSX: 'pulsex', PRVX: 'provex', INC: 'incentive',
-        };
+        const chain = token.network === 'Ethereum' ? 'eth' : 'pulsechain';
+        const gtData = await jsonRequest(`https://api.geckoterminal.com/api/v2/simple/networks/${chain}/token_price/${token.contract}`, 10000);
+        price = Number(gtData?.data?.attributes?.token_prices?.[token.contract.toLowerCase()] ?? 0);
+      } catch { /* CoinGecko is the final fallback. */ }
+    }
+    if (price === 0) {
+      try {
+        const coinGeckoIds: Record<string, string> = { ETH: 'ethereum', PLS: 'pulsechain', HEX: 'hex', pHEX: 'hex', PLSX: 'pulsex', PRVX: 'provex', INC: 'incentive' };
         const coinId = coinGeckoIds[token.symbol];
         if (coinId) {
           const cgData = await jsonRequest(`https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd&include_market_cap=true&include_24hr_change=true`, 10000);
-          if (cgData?.[coinId]) {
-            price = cgData[coinId].usd || 0;
-            marketCap = cgData[coinId].usd_market_cap || 0;
-            change24h = cgData[coinId].usd_24h_change || 0;
-          }
+          price = Number(cgData?.[coinId]?.usd ?? 0);
+          marketCap = Number(cgData?.[coinId]?.usd_market_cap ?? marketCap);
+          change24h = Number(cgData?.[coinId]?.usd_24h_change ?? change24h);
         }
-      } catch (e2) {
-        console.log('CoinGecko fallback also failed:', e2);
-      }
+      } catch { /* Keep the price unavailable instead of inventing one. */ }
     }
     
     if (marketCap === 0 && price > 0 && tokenData.total_supply) {
@@ -366,25 +448,32 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
 }
 
 async function fetchChartOHLCV(token: TokenInfo, period: string): Promise<{ time: number; value: number }[]> {
-  const chainId = token.network === 'PulseChain' ? 'pulsechain' : 'ethereum';
-  const intervalMap: Record<string, string> = { '24H': '5m', '7D': '1h', '30D': '4h', '3M': '1d', '6M': '1d', '1Y': '1d', 'ATL': '1d', 'All': '1d' };
-  const interval = intervalMap[period] || '1d';
+  const network: ChainNetwork = token.network === 'Ethereum' ? 'Ethereum' : 'PulseChain';
   const now = Math.floor(Date.now() / 1000);
   const periodSeconds: Record<string, number> = { '24H': 86400, '7D': 604800, '30D': 2592000, '3M': 7776000, '6M': 15552000, '1Y': 31536000, 'ATL': 315360000, 'All': 315360000 };
   const cutoff = now - (periodSeconds[period] || 2592000);
 
-  // Primary: DexScreener OHLCV
+  // Primary: OHLCV reconstructed from on-chain DEX pool swaps by GeckoTerminal.
   try {
-    const data = await jsonRequest(`https://api.dexscreener.com/token-ohlcv/v1/${chainId}/${token.contract}?interval=${interval}`, 15000);
-    const candles = Array.isArray(data?.candles) ? data.candles : Array.isArray(data) ? data : [];
-    const points = candles
-      .map((c: any) => ({
-        time: Number(c.time ?? c.t ?? c.openTime ?? 0),
-        value: Number(c.close ?? c.c ?? c.price ?? 0),
-      }))
-      .filter((d: { time: number; value: number }) => d.time >= cutoff && d.value > 0)
-      .sort((a: { time: number }, b: { time: number }) => a.time - b.time);
-    if (points.length >= 2) return points;
+    const poolsData = await jsonRequest(`https://api.geckoterminal.com/api/v2/networks/${GECKO_NETWORK[network]}/tokens/${token.contract}/pools?page=1`, 15000);
+    const pools = Array.isArray(poolsData?.data) ? poolsData.data.slice(0, 3) : [];
+    const timeframe = period === '24H' ? 'minute' : period === '7D' || period === '30D' ? 'hour' : 'day';
+    const aggregate = period === '24H' ? 15 : period === '30D' ? 4 : 1;
+    const limitMap: Record<string, number> = { '24H': 96, '7D': 168, '30D': 180, '3M': 100, '6M': 190, '1Y': 370, ATL: 1000, All: 1000 };
+    for (const pool of pools) {
+      const poolAddress = pool?.attributes?.address || String(pool?.id || '').split('_').pop();
+      if (!validAddress(poolAddress || '')) continue;
+      const baseId = String(pool?.relationships?.base_token?.data?.id || '').toLowerCase();
+      const tokenSide = baseId.endsWith(token.contract.toLowerCase()) ? 'base' : 'quote';
+      try {
+        const ohlcv = await jsonRequest(`https://api.geckoterminal.com/api/v2/networks/${GECKO_NETWORK[network]}/pools/${poolAddress}/ohlcv/${timeframe}?aggregate=${aggregate}&limit=${limitMap[period] || 180}&currency=usd&token=${tokenSide}`, 15000);
+        const points = (Array.isArray(ohlcv?.data?.attributes?.ohlcv_list) ? ohlcv.data.attributes.ohlcv_list : [])
+          .map((candle: any[]) => ({ time: Number(candle[0]), value: Number(candle[4]) }))
+          .filter((point: { time: number; value: number }) => point.time >= cutoff && point.value > 0)
+          .sort((left: { time: number }, right: { time: number }) => left.time - right.time);
+        if (points.length >= 2) return points;
+      } catch { /* Try the next liquid pool. */ }
+    }
   } catch { /* fall through */ }
 
   // Fallback: CoinGecko market chart
