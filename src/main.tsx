@@ -825,6 +825,11 @@ function App() {
   const copy = async (value: string, id: string) => {
     await navigator.clipboard.writeText(value); setCopied(id); setTimeout(() => setCopied(''), 1200);
   };
+  const refreshApp = () => {
+    const nextUrl = new URL(window.location.href);
+    nextUrl.searchParams.set('refresh', Date.now().toString());
+    window.location.replace(nextUrl.toString());
+  };
   const selectedWallet = wallets.find(wallet => wallet.id === selectedId) ?? wallets[0];
   const selectedPortfolioCandidate = selectedWallet ? portfolios[selectedWallet.id] : undefined;
   const selectedPortfolio = selectedPortfolioCandidate?.network === network ? selectedPortfolioCandidate : undefined;
@@ -998,7 +1003,7 @@ function App() {
 
       {wallets.length === 0 && <section className="next-preview"><p className="eyebrow">WHAT COMES NEXT</p><h2>Your wallet becomes a living dashboard.</h2><div className="preview-panels"><div/><div/><div/></div><p>Token panels inspired by your reference design will appear here after we connect live portfolio data.</p></section>}
     </main>
-    <footer><div className="footer-tools"><div className="brand mini"><Zap size={14}/>PULSE<span>VAULT</span></div><button className="refresh-button" onClick={() => window.location.reload()} aria-label="Refresh PulseVault"><RefreshCw size={14}/>Refresh</button></div><span>Watch-only portfolio intelligence</span></footer>
+    <footer><div className="footer-tools"><div className="brand mini"><Zap size={14}/>PULSE<span>VAULT</span></div><button className="refresh-button" onClick={refreshApp} aria-label="Refresh PulseVault"><RefreshCw size={14}/>Refresh</button></div><span>Watch-only portfolio intelligence</span></footer>
   </div>;
 }
 
