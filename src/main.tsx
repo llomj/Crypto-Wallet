@@ -24,6 +24,7 @@ type TokenStats = {
 };
 const STORAGE_KEY = 'pulse-vault-private-wallets-v2';
 const GROUP_STORAGE_KEY = 'pulse-vault-wallet-groups-v1';
+const NETWORK_STORAGE_KEY = 'pulse-vault-active-network-v1';
 const DEFAULT_GROUP_ID = 'my-wallet';
 const FEATURED_SYMBOLS = new Set(['PLS', 'WPLS', 'ETH', 'WETH', 'PLSX', 'HEX', 'pHEX', 'INC', 'PRVX', 'HDRN', 'ICSA', 'PDI', 'ASIC', 'PDA', 'USDC']);
 const HIDDEN_DUST_SYMBOLS = new Set(['FTVC', 'SCIVVE', 'SCIVVI', 'SCIVVII', 'SCIVV', 'HXY']);
@@ -160,6 +161,13 @@ function readGroups(): WalletGroup[] {
     const parsed = saved ? JSON.parse(saved) : [];
     return Array.isArray(parsed) && parsed.length ? parsed : [{ id: DEFAULT_GROUP_ID, name: 'My Wallet' }];
   } catch { return [{ id: DEFAULT_GROUP_ID, name: 'My Wallet' }]; }
+}
+
+function readNetwork(): Network {
+  try {
+    const saved = localStorage.getItem(NETWORK_STORAGE_KEY);
+    return saved === 'Ethereum' || saved === 'Both' ? saved : 'PulseChain';
+  } catch { return 'PulseChain'; }
 }
 
 function short(address: string) { return `${address.slice(0, 7)}…${address.slice(-5)}`; }
@@ -634,7 +642,7 @@ function App() {
   const [addressFormOpen, setAddressFormOpen] = useState(false);
   const [label, setLabel] = useState('');
   const [address, setAddress] = useState('');
-  const [network, setNetwork] = useState<Network>('PulseChain');
+  const [network, setNetwork] = useState<Network>(readNetwork);
   const [error, setError] = useState('');
   const [formNotice, setFormNotice] = useState('');
   const [copied, setCopied] = useState('');
@@ -658,6 +666,7 @@ function App() {
 
   useEffect(() => localStorage.setItem(STORAGE_KEY, JSON.stringify(wallets)), [wallets]);
   useEffect(() => localStorage.setItem(GROUP_STORAGE_KEY, JSON.stringify(walletGroups)), [walletGroups]);
+  useEffect(() => localStorage.setItem(NETWORK_STORAGE_KEY, network), [network]);
   useEffect(() => { if (!wallets.some(wallet => wallet.id === selectedId)) setSelectedId(wallets[0]?.id ?? ''); }, [wallets, selectedId]);
   useEffect(() => setShowAllAssets(false), [selectedId]);
   useEffect(() => { setChartOpen(false); setChartPeriod('24H'); setChartData([]); setChartPercentage(0); setChartLoading(false); }, [selectedToken]);
@@ -730,12 +739,11 @@ function App() {
     setChartPercentage(fallbackPercentage(tokenStats[selectedToken], chartPeriod));
   }, [tokenStats, selectedToken, chartPeriod, chartData.length]);
 
-  const refreshWallet = async (wallet: TrackedWallet) => {
-    const requestedNetwork = wallet.network;
+  const refreshWallet = async (wallet: TrackedWallet, requestedNetwork: Network = network) => {
     portfolioRequestRef.current[wallet.id] = requestedNetwork;
     setPortfolios(current => ({ ...current, [wallet.id]: { assets: current[wallet.id]?.network === requestedNetwork ? current[wallet.id].assets : [], loading: true, error: '', refreshedAt: current[wallet.id]?.network === requestedNetwork ? current[wallet.id].refreshedAt : null, network: requestedNetwork } }));
     try {
-      const assets = await loadPortfolio(wallet);
+      const assets = await loadPortfolio({ ...wallet, network: requestedNetwork });
       if (portfolioRequestRef.current[wallet.id] !== requestedNetwork) return;
       setPortfolios(current => ({ ...current, [wallet.id]: { assets, loading: false, error: '', refreshedAt: Date.now(), network: requestedNetwork } }));
     } catch (requestError) {
@@ -746,8 +754,14 @@ function App() {
   };
 
   useEffect(() => {
-    wallets.filter(wallet => !portfolios[wallet.id] || portfolios[wallet.id].network !== wallet.network).slice(0, 3).forEach(wallet => void refreshWallet(wallet));
-  }, [wallets, portfolios]);
+    wallets.filter(wallet => !portfolios[wallet.id] || portfolios[wallet.id].network !== network).slice(0, 3).forEach(wallet => void refreshWallet(wallet, network));
+  }, [wallets, portfolios, network]);
+
+  const chooseNetwork = (nextNetwork: Network) => {
+    setNetwork(nextNetwork);
+    setError('');
+    setFormNotice(wallets.length ? `Refreshing every tracked address on ${networkLabel(nextNetwork)}…` : '');
+  };
 
   const addWallet = (event: FormEvent) => {
     event.preventDefault();
@@ -765,7 +779,7 @@ function App() {
         return next;
       });
       setSelectedId(existingWallet.id);
-      setFormNotice(`${existingWallet.label} now tracks ${networkLabel(network)}.`);
+      setFormNotice(`${existingWallet.label} is now showing ${networkLabel(network)}.`);
       setAddress(''); setLabel(''); setError('');
       return;
     }
@@ -796,13 +810,23 @@ function App() {
     await navigator.clipboard.writeText(value); setCopied(id); setTimeout(() => setCopied(''), 1200);
   };
   const selectedWallet = wallets.find(wallet => wallet.id === selectedId) ?? wallets[0];
-  const selectedPortfolio = selectedWallet ? portfolios[selectedWallet.id] : undefined;
+  const selectedPortfolioCandidate = selectedWallet ? portfolios[selectedWallet.id] : undefined;
+  const selectedPortfolio = selectedPortfolioCandidate?.network === network ? selectedPortfolioCandidate : undefined;
   const orderedWallets = [...wallets].sort((left, right) => {
     const leftNumber = /^Wallet\s+(\d+)$/i.exec(left.label)?.[1];
     const rightNumber = /^Wallet\s+(\d+)$/i.exec(right.label)?.[1];
     return leftNumber && rightNumber ? Number(leftNumber) - Number(rightNumber) : 0;
   });
-  const knownValue = wallets.reduce((total, wallet) => total + (portfolios[wallet.id]?.assets.reduce((walletTotal, asset) => walletTotal + (asset.value ?? 0), 0) ?? 0), 0);
+  const networkLoading = wallets.some(wallet => portfolios[wallet.id]?.network !== network || portfolios[wallet.id]?.loading);
+  useEffect(() => {
+    if (!networkLoading && wallets.length && formNotice.startsWith('Refreshing every tracked address')) {
+      setFormNotice(`All tracked addresses now show ${networkLabel(network)}.`);
+    }
+  }, [networkLoading, network, wallets.length, formNotice]);
+  const knownValue = wallets.reduce((total, wallet) => {
+    const portfolio = portfolios[wallet.id];
+    return total + (portfolio?.network === network ? portfolio.assets.reduce((walletTotal, asset) => walletTotal + (asset.value ?? 0), 0) : 0);
+  }, 0);
   const selectedValue = selectedPortfolio?.assets.reduce((total, asset) => total + (asset.value ?? 0), 0) ?? 0;
   const selectedEthereumValue = selectedPortfolio?.assets.reduce((total, asset) => total + (asset.network === 'Ethereum' ? asset.value ?? 0 : 0), 0) ?? 0;
   const selectedPulseValue = selectedPortfolio?.assets.reduce((total, asset) => total + (asset.network === 'PulseChain' ? asset.value ?? 0 : 0), 0) ?? 0;
@@ -900,7 +924,7 @@ function App() {
             <label className="field-label">Wallet name <span>optional</span><input value={label} onChange={e => setLabel(e.target.value)} placeholder="Give this wallet a private label" autoComplete="off"/></label>
             <label className="field-label">Public wallet address<div className={`address-input ${error ? 'invalid' : ''}`}><input aria-label="Public wallet address" value={address} onChange={e => {setAddress(e.target.value.trim()); setError(''); setFormNotice('')}} placeholder="Paste the complete public address" autoCapitalize="off" autoCorrect="off" spellCheck={false}/></div>{error && <small className="error">{error}</small>}</label>
             <label className="field-label">Add to wallet<div className="wallet-selector">{walletGroups.map(group => { const groupWallets = wallets.filter(w => (w.groupId ?? DEFAULT_GROUP_ID) === group.id); return <button type="button" key={group.id} className={`wallet-selector-item ${selectedGroupId === group.id ? 'selected' : ''}`} onClick={() => setSelectedGroupId(group.id)}><span className="wallet-selector-name">{group.name}</span><span className="wallet-selector-count">{groupWallets.length} {groupWallets.length === 1 ? 'wallet' : 'wallets'}</span></button>; })}</div></label>
-            <fieldset><legend>Choose network</legend><div className="network-choice"><button type="button" aria-pressed={network === 'PulseChain'} className={network === 'PulseChain' ? 'active' : ''} onClick={() => { setNetwork('PulseChain'); setError(''); setFormNotice(''); }}><i className="pulse-dot"/><span><b>PulseChain</b><small>PLS · Chain 369</small></span></button><button type="button" aria-pressed={network === 'Ethereum'} className={network === 'Ethereum' ? 'active' : ''} onClick={() => { setNetwork('Ethereum'); setError(''); setFormNotice(''); }}><i className="eth-diamond">◆</i><span><b>Ethereum</b><small>ETH · Chain 1</small></span></button><button type="button" aria-pressed={network === 'Both'} className={network === 'Both' ? 'active' : ''} onClick={() => { setNetwork('Both'); setError(''); setFormNotice(''); }}><i className="both-network-icon"><span className="pulse-dot"/><span className="eth-diamond">◆</span></i><span><b>Both networks</b><small>PLS + ETH combined</small></span></button></div></fieldset>
+            <fieldset><legend>Choose network <span className="network-live-label">Controls all tracked wallets</span></legend><div className="network-choice"><button type="button" aria-pressed={network === 'PulseChain'} className={network === 'PulseChain' ? 'active' : ''} onClick={() => chooseNetwork('PulseChain')}><i className="pulse-dot"/><span><b>PulseChain</b><small>PLS · Chain 369</small></span></button><button type="button" aria-pressed={network === 'Ethereum'} className={network === 'Ethereum' ? 'active' : ''} onClick={() => chooseNetwork('Ethereum')}><i className="eth-diamond">◆</i><span><b>Ethereum</b><small>ETH · Chain 1</small></span></button><button type="button" aria-pressed={network === 'Both'} className={network === 'Both' ? 'active' : ''} onClick={() => chooseNetwork('Both')}><i className="both-network-icon"><span className="pulse-dot"/><span className="eth-diamond">◆</span></i><span><b>Both networks</b><small>PLS + ETH combined</small></span></button></div></fieldset>
             <button className="scan-button" type="submit">{matchingWallet && matchingWallet.network !== network ? `Update ${matchingWallet.label} to ${networkLabel(network)}` : 'Track this wallet'} <ArrowRight size={18}/></button>
             {formNotice && <small className="network-success" role="status">{formNotice}</small>}
             <div className="privacy-line"><LockKeyhole size={13}/>Stored locally in your browser only</div>
@@ -919,19 +943,19 @@ function App() {
         </div>
         {!trackedCollapsed && <div className="vault-board">
           <div className="vault-summary">
-            <div className="portfolio-totals"><div><span>TOTAL PORTFOLIO</span><strong>{privateMode ? '••••••' : knownValue > 0 ? money(knownValue) : 'Live assets'}</strong><small>{wallets.length} {wallets.length === 1 ? 'address' : 'addresses'} · all wallets</small></div>{selectedWallet && <div className="selected-total"><span>{selectedWallet.label}</span><strong>{privateMode ? '••••••' : selectedValue > 0 ? money(selectedValue) : 'Live assets'}</strong><small>{privateMode ? 'Network values hidden' : selectedWallet.network === 'Both' ? `ETH ${money(selectedEthereumValue)} · PLS ${money(selectedPulseValue)}` : `${networkLabel(selectedWallet.network)} · all priced coins`}</small></div>}</div>
-            {selectedWallet && <button className={`sync-control ${Object.values(portfolios).some(portfolio => portfolio.loading) ? 'spinning' : ''}`} onClick={() => wallets.forEach(wallet => void refreshWallet(wallet))} disabled={Object.values(portfolios).some(portfolio => portfolio.loading)}><RefreshCw size={16}/>{Object.values(portfolios).some(portfolio => portfolio.loading) ? 'Syncing' : 'Sync all'}</button>}
+            <div className="portfolio-totals"><div><span>TOTAL PORTFOLIO · {networkLabel(network)}</span><strong>{privateMode ? '••••••' : networkLoading ? 'Syncing…' : knownValue > 0 ? money(knownValue) : '$0.00'}</strong><small>{wallets.length} {wallets.length === 1 ? 'address' : 'addresses'} · {networkLabel(network)}</small></div>{selectedWallet && <div className="selected-total"><span>{selectedWallet.label} · {networkLabel(network)}</span><strong>{privateMode ? '••••••' : networkLoading ? 'Syncing…' : selectedValue > 0 ? money(selectedValue) : '$0.00'}</strong><small>{privateMode ? 'Network values hidden' : network === 'Both' ? `ETH ${money(selectedEthereumValue)} · PLS ${money(selectedPulseValue)}` : `${networkLabel(network)} · all priced coins`}</small></div>}</div>
+            {selectedWallet && <button className={`sync-control ${networkLoading ? 'spinning' : ''}`} onClick={() => wallets.forEach(wallet => void refreshWallet(wallet, network))} disabled={networkLoading}><RefreshCw size={16}/>{networkLoading ? 'Syncing' : 'Sync all'}</button>}
           </div>
           <div className="wallet-groups">
             {walletGroups.map(group => {
               const groupWallets = orderedWallets.filter(wallet => (wallet.groupId ?? DEFAULT_GROUP_ID) === group.id);
-              const groupValue = groupWallets.reduce((total, wallet) => total + (portfolios[wallet.id]?.assets.reduce((sum, asset) => sum + (asset.value ?? 0), 0) ?? 0), 0);
+              const groupValue = groupWallets.reduce((total, wallet) => { const portfolio = portfolios[wallet.id]; return total + (portfolio?.network === network ? portfolio.assets.reduce((sum, asset) => sum + (asset.value ?? 0), 0) : 0); }, 0);
               const collapsed = collapsedGroups.includes(group.id);
               return <section className="wallet-group" key={group.id}>
                 <div className="wallet-group-head"><button className="group-fold" onClick={() => setCollapsedGroups(current => collapsed ? current.filter(id => id !== group.id) : [...current, group.id])} aria-expanded={!collapsed}><ChevronDown size={16}/><span>{groupWallets.length} {groupWallets.length === 1 ? 'address' : 'addresses'}</span></button><input aria-label={`Name for ${group.name}`} value={group.name} onChange={event => renameGroup(group.id, event.target.value)}/><b>{privateMode ? '••••' : groupValue > 0 ? money(groupValue) : 'Live assets'}</b></div>
                 {!collapsed && <div className="address-rail" aria-label={`${group.name} saved addresses`}>
                   {groupWallets.map((wallet, index) => <button className={`mini-wallet n${index % 4} ${wallet.id === selectedWallet?.id ? 'selected' : ''}`} key={wallet.id} onClick={() => setSelectedId(wallet.id)}>
-                    <span className="mini-number">{String(index + 1).padStart(2, '0')}</span><div><small>{networkLabel(wallet.network)}</small><b>{wallet.label}</b><em>{privateMode ? '••••••••' : short(wallet.address)}</em></div><i/>
+                    <span className="mini-number">{String(index + 1).padStart(2, '0')}</span><div><small>{networkLabel(network)}</small><b>{wallet.label}</b><em>{privateMode ? '••••••••••••••••' : short(wallet.address)}</em></div><i/>
                   </button>)}
                   {groupWallets.length === 0 && <p className="empty-group">Choose this wallet in the address form to add an address.</p>}
                 </div>}
@@ -939,19 +963,19 @@ function App() {
             })}
           </div>
           {!trackedCollapsed && selectedWallet && !collapsedGroups.includes(selectedWallet.groupId ?? DEFAULT_GROUP_ID) && <div className="asset-panel">
-            <div className="asset-panel-head"><div><p className="eyebrow">SELECTED ADDRESS · {networkLabel(selectedWallet.network)}</p><input className="address-name-input" aria-label="Rename selected wallet" value={selectedWallet.label} onChange={event => renameWallet(selectedWallet.id, event.target.value)}/><button onClick={() => copy(selectedWallet.address, selectedWallet.id)}>{privateMode ? '••••••••••••••••' : short(selectedWallet.address)} {copied === selectedWallet.id ? <em>COPIED</em> : <Copy size={13}/>}</button></div><div className="selected-actions"><button className={hideDust ? 'dust-active' : ''} onClick={() => setHideDust(value => !value)}>{hideDust ? `Show dust${hiddenDustCount ? ` · ${hiddenDustCount} hidden` : ''}` : 'Hide dust'}</button>{selectedWallet.network !== 'PulseChain' && <a href={`https://etherscan.io/address/${selectedWallet.address}`} target="_blank" rel="noreferrer" aria-label="Open Ethereum explorer">ETH <ArrowUpRight size={15}/></a>}{selectedWallet.network !== 'Ethereum' && <a href={`https://scan.pulsechain.com/address/${selectedWallet.address}`} target="_blank" rel="noreferrer" aria-label="Open PulseChain explorer">PLS <ArrowUpRight size={15}/></a>}<button onClick={() => setWallets(wallets.filter(wallet => wallet.id !== selectedWallet.id))} aria-label={`Remove ${selectedWallet.label}`}><Trash2 size={16}/></button></div></div>
+            <div className="asset-panel-head"><div><p className="eyebrow">SELECTED ADDRESS · {networkLabel(network)}</p><input className="address-name-input" aria-label="Rename selected wallet" value={selectedWallet.label} onChange={event => renameWallet(selectedWallet.id, event.target.value)}/><button onClick={() => copy(selectedWallet.address, selectedWallet.id)}>{privateMode ? '••••••••••••••••' : short(selectedWallet.address)} {copied === selectedWallet.id ? <em>COPIED</em> : <Copy size={13}/>}</button></div><div className="selected-actions"><button className={hideDust ? 'dust-active' : ''} onClick={() => setHideDust(value => !value)}>{hideDust ? `Show dust${hiddenDustCount ? ` · ${hiddenDustCount} hidden` : ''}` : 'Hide dust'}</button>{network !== 'PulseChain' && <a href={`https://etherscan.io/address/${selectedWallet.address}`} target="_blank" rel="noreferrer" aria-label="Open Ethereum explorer">ETH <ArrowUpRight size={15}/></a>}{network !== 'Ethereum' && <a href={`https://scan.pulsechain.com/address/${selectedWallet.address}`} target="_blank" rel="noreferrer" aria-label="Open PulseChain explorer">PLS <ArrowUpRight size={15}/></a>}<button onClick={() => setWallets(wallets.filter(wallet => wallet.id !== selectedWallet.id))} aria-label={`Remove ${selectedWallet.label}`}><Trash2 size={16}/></button></div></div>
             <div className="asset-list">
-              {selectedPortfolio?.loading && selectedPortfolio.assets.length === 0 && <div className="asset-message"><RefreshCw size={20} className="spin-icon"/>Reading live {networkLabel(selectedWallet.network)} assets…</div>}
+              {(!selectedPortfolio || selectedPortfolio.loading) && (selectedPortfolio?.assets.length ?? 0) === 0 && <div className="asset-message"><RefreshCw size={20} className="spin-icon"/>Reading live {networkLabel(network)} assets…</div>}
               {selectedPortfolio?.error && <div className="asset-message error-message">{selectedPortfolio.error}<button onClick={() => refreshWallet(selectedWallet)}>Try again</button></div>}
               {!selectedPortfolio?.loading && !selectedPortfolio?.error && selectedPortfolio?.assets.length === 0 && <div className="asset-message">No indexed assets were found for this address.</div>}
               {visibleAssets.map(asset => { const shownSymbol = displayAssetSymbol(asset); const shownKey = tokenKey(shownSymbol); return <article className="asset-row" key={asset.id} data-network={asset.network}>
                 <div className={`asset-logo ${asset.native ? 'native' : ''} ${shownKey.toLowerCase()}-logo`}><span>{shownSymbol.slice(0, 3)}</span>{(CORE_ICONS[shownKey] || asset.icon)?.startsWith('http') || CORE_ICONS[shownKey] ? <img src={CORE_ICONS[shownKey] || asset.icon || ''} alt={`${shownSymbol} logo`} onError={event => { event.currentTarget.style.display = 'none'; }}/>: null}</div>
-                <div className="asset-main"><div className="asset-name"><b>{shownSymbol} <small>({asset.name})</small>{selectedWallet.network === 'Both' && <em className={`asset-network-badge ${asset.network === 'Ethereum' ? 'ethereum' : 'pulsechain'}`}>{asset.network}</em>}</b></div><div className="asset-balance"><b>{privateMode ? '••••' : compactAmount(asset.amount)} <small>{shownSymbol}</small></b></div></div>
+                <div className="asset-main"><div className="asset-name"><b>{shownSymbol} <small>({asset.name})</small>{network === 'Both' && <em className={`asset-network-badge ${asset.network === 'Ethereum' ? 'ethereum' : 'pulsechain'}`}>{asset.network}</em>}</b></div><div className="asset-balance"><b>{privateMode ? '••••' : compactAmount(asset.amount)} <small>{shownSymbol}</small></b></div></div>
                 <div className="asset-price"><b>{privateMode ? '••••' : asset.value === null ? '—' : money(asset.value)}</b><small>{privateMode ? 'Price hidden' : money(asset.price)}</small></div>
               </article>; })}
               {filteredAssets.length > 30 && <button className="show-assets" onClick={() => setShowAllAssets(value => !value)}>{showAllAssets ? 'Show top assets' : `View all ${filteredAssets.length} visible assets`}</button>}
             </div>
-            <div className="live-data-note"><Radio size={11}/>Live read-only data from {networkLabel(selectedWallet.network)} · {selectedPortfolio?.refreshedAt ? `updated ${new Date(selectedPortfolio.refreshedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'waiting to sync'}</div>
+            <div className="live-data-note"><Radio size={11}/>Live read-only data from {networkLabel(network)} · {selectedPortfolio?.refreshedAt ? `updated ${new Date(selectedPortfolio.refreshedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'waiting to sync'}</div>
           </div>}
         </div>}
       </section><div className={`new-wallet-panel ${newWalletPanelOpen ? 'open' : ''}`}><div className="new-wallet-glow"/><button className="new-wallet-fold" onClick={() => setNewWalletPanelOpen(value => !value)} aria-expanded={newWalletPanelOpen}><span className="new-wallet-title"><i className="wallet-orbit"><FolderPlus size={20}/></i><span><small>ORGANIZE YOUR WATCHLIST</small><b>Create another wallet</b></span></span><ChevronDown size={17}/></button>{newWalletPanelOpen && <div className="new-wallet-body"><p className="panel-note">Create a separate wallet for personal addresses, whales, or any watchlist you choose.</p><div className="group-creator"><FolderPlus size={15}/><input aria-label="New wallet group name" value={newGroupName} onChange={event => setNewGroupName(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addGroup(); } }} placeholder="Name a new wallet, e.g. Whales"/><button onClick={addGroup} disabled={!newGroupName.trim()}>Create wallet</button></div></div>}</div></>}
