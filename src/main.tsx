@@ -1,6 +1,6 @@
 import React, { FormEvent, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowRight, ArrowUpRight, ChevronDown, Copy, Eye, EyeOff, FolderPlus, LockKeyhole, Radio, RefreshCw, ShieldCheck, Trash2, WalletCards, Zap } from 'lucide-react';
+import { ArrowRight, ArrowUpRight, ChevronDown, Copy, Eye, EyeOff, FolderPlus, LockKeyhole, Radio, RefreshCw, ScanSearch, ShieldCheck, Trash2, WalletCards, Zap } from 'lucide-react';
 import { createChart, IChartApi, ISeriesApi, LineStyle, LineSeries } from 'lightweight-charts';
 import './styles.css';
 
@@ -918,7 +918,7 @@ function App() {
 
         <form className={`address-panel ${addressFormOpen ? 'open' : 'collapsed'}`} onSubmit={addWallet}>
           <div className="panel-glow"/>
-          <button className="panel-heading panel-fold" type="button" onClick={() => setAddressFormOpen(value => !value)} aria-expanded={addressFormOpen}><div className="wallet-orbit"><WalletCards size={24}/></div><div><p className="eyebrow">ADD AN ADDRESS</p><h2>Enter a public address</h2></div><ChevronDown size={18}/></button>
+          <button className="panel-heading panel-fold" type="button" onClick={() => setAddressFormOpen(value => !value)} aria-expanded={addressFormOpen}><div className="wallet-orbit"><ScanSearch size={24}/></div><div><p className="eyebrow">ADD AN ADDRESS</p><h2>Enter a public address</h2></div><ChevronDown size={18}/></button>
           {addressFormOpen && <div className="address-panel-body">
             <p className="panel-note">Your address stays on this device. It is never added to our code or public GitHub.</p>
             <label className="field-label">Wallet name <span>optional</span><input value={label} onChange={e => setLabel(e.target.value)} placeholder="Give this wallet a private label" autoComplete="off"/></label>
@@ -952,7 +952,7 @@ function App() {
               const groupValue = groupWallets.reduce((total, wallet) => { const portfolio = portfolios[wallet.id]; return total + (portfolio?.network === network ? portfolio.assets.reduce((sum, asset) => sum + (asset.value ?? 0), 0) : 0); }, 0);
               const collapsed = collapsedGroups.includes(group.id);
               return <section className="wallet-group" key={group.id}>
-                <div className="wallet-group-head"><button className="group-fold" onClick={() => setCollapsedGroups(current => collapsed ? current.filter(id => id !== group.id) : [...current, group.id])} aria-expanded={!collapsed}><ChevronDown size={16}/><span>{groupWallets.length} {groupWallets.length === 1 ? 'address' : 'addresses'}</span></button><input aria-label={`Name for ${group.name}`} value={group.name} onChange={event => renameGroup(group.id, event.target.value)}/><b>{privateMode ? '••••' : groupValue > 0 ? money(groupValue) : 'Live assets'}</b></div>
+                <div className="wallet-group-head"><button className="group-fold" onClick={() => setCollapsedGroups(current => collapsed ? current.filter(id => id !== group.id) : [...current, group.id])} aria-expanded={!collapsed}><ChevronDown size={16}/><span>{groupWallets.length} {groupWallets.length === 1 ? 'address' : 'addresses'} · {collapsed ? 'Show cards' : 'Hide cards'}</span></button><input aria-label={`Name for ${group.name}`} value={group.name} onChange={event => renameGroup(group.id, event.target.value)}/><b>{privateMode ? '••••' : groupValue > 0 ? money(groupValue) : 'Live assets'}</b></div>
                 {!collapsed && <div className="address-rail" aria-label={`${group.name} saved addresses`}>
                   {groupWallets.map((wallet, index) => <button className={`mini-wallet n${index % 4} ${wallet.id === selectedWallet?.id ? 'selected' : ''}`} key={wallet.id} onClick={() => setSelectedId(wallet.id)}>
                     <span className="mini-number">{String(index + 1).padStart(2, '0')}</span><div><small>{networkLabel(network)}</small><b>{wallet.label}</b><em>{privateMode ? '••••••••••••••••' : short(wallet.address)}</em></div><i/>
@@ -962,7 +962,7 @@ function App() {
               </section>;
             })}
           </div>
-          {!trackedCollapsed && selectedWallet && !collapsedGroups.includes(selectedWallet.groupId ?? DEFAULT_GROUP_ID) && <div className="asset-panel">
+          {!trackedCollapsed && selectedWallet && <div className="asset-panel">
             <div className="asset-panel-head"><div><p className="eyebrow">SELECTED ADDRESS · {networkLabel(network)}</p><input className="address-name-input" aria-label="Rename selected wallet" value={selectedWallet.label} onChange={event => renameWallet(selectedWallet.id, event.target.value)}/><button onClick={() => copy(selectedWallet.address, selectedWallet.id)}>{privateMode ? '••••••••••••••••' : short(selectedWallet.address)} {copied === selectedWallet.id ? <em>COPIED</em> : <Copy size={13}/>}</button></div><div className="selected-actions"><button className={hideDust ? 'dust-active' : ''} onClick={() => setHideDust(value => !value)}>{hideDust ? `Show dust${hiddenDustCount ? ` · ${hiddenDustCount} hidden` : ''}` : 'Hide dust'}</button>{network !== 'PulseChain' && <a href={`https://etherscan.io/address/${selectedWallet.address}`} target="_blank" rel="noreferrer" aria-label="Open Ethereum explorer">ETH <ArrowUpRight size={15}/></a>}{network !== 'Ethereum' && <a href={`https://scan.pulsechain.com/address/${selectedWallet.address}`} target="_blank" rel="noreferrer" aria-label="Open PulseChain explorer">PLS <ArrowUpRight size={15}/></a>}<button onClick={() => setWallets(wallets.filter(wallet => wallet.id !== selectedWallet.id))} aria-label={`Remove ${selectedWallet.label}`}><Trash2 size={16}/></button></div></div>
             <div className="asset-list">
               {(!selectedPortfolio || selectedPortfolio.loading) && (selectedPortfolio?.assets.length ?? 0) === 0 && <div className="asset-message"><RefreshCw size={20} className="spin-icon"/>Reading live {networkLabel(network)} assets…</div>}
