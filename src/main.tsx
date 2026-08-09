@@ -31,6 +31,7 @@ const WRAPPED_NATIVE: Record<Network, string> = {
   Ethereum: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
 };
 const CORE_ICONS: Record<string, string> = {
+  ETH: `${import.meta.env.BASE_URL}token-icons/eth.png`,
   PLS: `${import.meta.env.BASE_URL}token-icons/pls.png`,
   WPLS: `${import.meta.env.BASE_URL}token-icons/pls.png`,
   PLSX: `${import.meta.env.BASE_URL}token-icons/plsx.png`,
@@ -38,7 +39,7 @@ const CORE_ICONS: Record<string, string> = {
   INC: `${import.meta.env.BASE_URL}token-icons/inc.png`,
   pHEX: `${import.meta.env.BASE_URL}token-icons/phex.png`,
   USDC: `${import.meta.env.BASE_URL}token-icons/usdc.png`,
-  WETH: `${import.meta.env.BASE_URL}token-icons/weth.png`,
+  WETH: `${import.meta.env.BASE_URL}token-icons/eth.png`,
   HDRN: `${import.meta.env.BASE_URL}token-icons/hdrn.png`,
   ICSA: `${import.meta.env.BASE_URL}token-icons/icsa.png`,
   ASIC: `${import.meta.env.BASE_URL}token-icons/asic.png`,
@@ -266,10 +267,13 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
       holders = holderCount >= 1000 ? compactAmount(String(holderCount), 1) : holderCount.toLocaleString();
     }
     
-    // Get price data - use DexScreener as primary (block explorer doesn't provide price for PulseChain)
+    // Get price data - DexScreener primary, CoinGecko fallback
     let price = 0;
     let liquidity = 0;
     let marketCap = 0;
+    let change24h = 0;
+    let change7d = 0;
+    let change30d = 0;
     
     try {
       const chainId = token.network === 'PulseChain' ? 'pulsechain' : 'ethereum';
@@ -286,26 +290,21 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
         liquidity = Number(pair.liquidity?.usd ?? 0);
         const fdv = Number(pair.fdv ?? 0);
         marketCap = fdv > 0 ? fdv : liquidity * 10;
+        change24h = Number(pair.priceChange?.h24 ?? 0);
       }
     } catch (e) {
       console.log('DexScreener failed, trying CoinGecko fallback:', e);
-      // Fallback to CoinGecko if DexScreener fails
       try {
         const coinGeckoIds: Record<string, string> = {
-          'ETH': 'ethereum',
-          'PLS': 'pulsechain',
-          'HEX': 'hex',
-          'pHEX': 'hex',
-          'PLSX': 'pulsex',
-          'PRVX': 'provex',
-          'INC': 'incentive'
+          ETH: 'ethereum', PLS: 'pulsechain', HEX: 'hex', pHEX: 'hex', PLSX: 'pulsex', PRVX: 'provex', INC: 'incentive',
         };
         const coinId = coinGeckoIds[token.symbol];
         if (coinId) {
-          const cgData = await jsonRequest(`https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd&include_market_cap=true`, 10000);
+          const cgData = await jsonRequest(`https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd&include_market_cap=true&include_24hr_change=true`, 10000);
           if (cgData?.[coinId]) {
             price = cgData[coinId].usd || 0;
             marketCap = cgData[coinId].usd_market_cap || 0;
+            change24h = cgData[coinId].usd_24h_change || 0;
           }
         }
       } catch (e2) {
@@ -313,58 +312,21 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
       }
     }
     
-    // Calculate market cap from price and supply if not from DexScreener
     if (marketCap === 0 && price > 0 && tokenData.total_supply) {
       const decimals = tokenData.decimals ?? 18;
       const supplyNum = Number(formatUnits(String(tokenData.total_supply), decimals));
       marketCap = price * supplyNum;
     }
-    
-    // Fetch price history from CoinGecko for percentage changes
-    let change24h = 0;
-    let change7d = 0;
-    let change30d = 0;
-    
+
+    // Seed period % from chart series so 7D/30D work immediately
     try {
-      const coinGeckoIds: Record<string, string> = {
-        'ETH': 'ethereum',
-        'PLS': 'pulsechain',
-        'HEX': 'hex',
-        'pHEX': 'hex',
-        'PLSX': 'pulsex',
-        'PRVX': 'provex',
-        'INC': 'incentive'
-      };
-      
-      const coinId = coinGeckoIds[token.symbol];
-      if (coinId) {
-        const historyData = await jsonRequest(
-          `https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=usd&days=30`,
-          10000
-        );
-        
-        if (historyData?.prices && historyData.prices.length > 0) {
-          const prices = historyData.prices;
-          const currentPrice = prices[prices.length - 1][1];
-          
-          const oneDayAgo = prices.find((p: any) => p[0] <= Date.now() - 86400000);
-          if (oneDayAgo) {
-            change24h = ((currentPrice - oneDayAgo[1]) / oneDayAgo[1]) * 100;
-          }
-          
-          const sevenDaysAgo = prices.find((p: any) => p[0] <= Date.now() - 604800000);
-          if (sevenDaysAgo) {
-            change7d = ((currentPrice - sevenDaysAgo[1]) / sevenDaysAgo[1]) * 100;
-          }
-          
-          const firstPrice = prices[0][1];
-          if (firstPrice > 0) {
-            change30d = ((currentPrice - firstPrice) / firstPrice) * 100;
-          }
-        }
-      }
-    } catch (e) {
-      console.log('CoinGecko history fetch failed:', e);
+      const series7 = await fetchChartOHLCV(token, '7D');
+      const series30 = await fetchChartOHLCV(token, '30D');
+      change7d = percentFromSeries(series7) || change24h;
+      change30d = percentFromSeries(series30) || change24h;
+    } catch {
+      change7d = change24h;
+      change30d = change24h;
     }
     
     return { 
@@ -386,50 +348,52 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
 }
 
 async function fetchChartOHLCV(token: TokenInfo, period: string): Promise<{ time: number; value: number }[]> {
+  const chainId = token.network === 'PulseChain' ? 'pulsechain' : 'ethereum';
+  const intervalMap: Record<string, string> = { '24H': '5m', '7D': '1h', '30D': '4h', '3M': '1d', '6M': '1d', '1Y': '1d', 'ATL': '1d', 'All': '1d' };
+  const interval = intervalMap[period] || '1d';
+  const now = Math.floor(Date.now() / 1000);
+  const periodSeconds: Record<string, number> = { '24H': 86400, '7D': 604800, '30D': 2592000, '3M': 7776000, '6M': 15552000, '1Y': 31536000, 'ATL': 315360000, 'All': 315360000 };
+  const cutoff = now - (periodSeconds[period] || 2592000);
+
+  // Primary: DexScreener OHLCV
   try {
-    // Map tokens to CoinGecko IDs
+    const data = await jsonRequest(`https://api.dexscreener.com/token-ohlcv/v1/${chainId}/${token.contract}?interval=${interval}`, 15000);
+    const candles = Array.isArray(data?.candles) ? data.candles : Array.isArray(data) ? data : [];
+    const points = candles
+      .map((c: any) => ({
+        time: Number(c.time ?? c.t ?? c.openTime ?? 0),
+        value: Number(c.close ?? c.c ?? c.price ?? 0),
+      }))
+      .filter((d: { time: number; value: number }) => d.time >= cutoff && d.value > 0)
+      .sort((a: { time: number }, b: { time: number }) => a.time - b.time);
+    if (points.length >= 2) return points;
+  } catch { /* fall through */ }
+
+  // Fallback: CoinGecko market chart
+  try {
     const coinGeckoIds: Record<string, string> = {
-      'ETH': 'ethereum',
-      'PLS': 'pulsechain',
-      'HEX': 'hex',
-      'pHEX': 'hex',
-      'PLSX': 'pulsex',
-      'PRVX': 'provex',
-      'INC': 'incentive'
+      ETH: 'ethereum', PLS: 'pulsechain', HEX: 'hex', pHEX: 'hex', PLSX: 'pulsex', PRVX: 'provex', INC: 'incentive',
     };
-    
     const coinId = coinGeckoIds[token.symbol];
     if (!coinId) return [];
-    
-    // Map periods to CoinGecko days
-    const periodDays: Record<string, number> = {
-      '24H': 1,
-      '7D': 7,
-      '30D': 30,
-      '3M': 90,
-      '6M': 180,
-      '1Y': 365,
-      'ATL': 365,
-      'All': 365
-    };
-    
+    const periodDays: Record<string, number> = { '24H': 1, '7D': 7, '30D': 30, '3M': 90, '6M': 180, '1Y': 365, ATL: 365, All: 365 };
     const days = periodDays[period] || 30;
-    
-    const data = await jsonRequest(
-      `https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=usd&days=${days}`,
-      15000
-    );
-    
+    const data = await jsonRequest(`https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=usd&days=${days}`, 15000);
     if (!data?.prices) return [];
-    
-    // Convert CoinGecko format [timestamp, price] to our format
     return data.prices
-      .map((p: any) => ({ time: Math.floor(p[0] / 1000), value: p[1] }))
-      .filter((d: any) => d.value > 0);
-  } catch (e) {
-    console.log('Chart fetch failed:', e);
+      .map((p: any) => ({ time: Math.floor(p[0] / 1000), value: Number(p[1]) }))
+      .filter((d: { time: number; value: number }) => d.value > 0);
+  } catch {
     return [];
   }
+}
+
+function percentFromSeries(data: { time: number; value: number }[]): number {
+  if (data.length < 2) return 0;
+  const first = data[0].value;
+  const last = data[data.length - 1].value;
+  if (!(first > 0) || !Number.isFinite(first) || !Number.isFinite(last)) return 0;
+  return ((last - first) / first) * 100;
 }
 
 function App() {
@@ -465,32 +429,22 @@ function App() {
   useEffect(() => localStorage.setItem(GROUP_STORAGE_KEY, JSON.stringify(walletGroups)), [walletGroups]);
   useEffect(() => { if (!wallets.some(wallet => wallet.id === selectedId)) setSelectedId(wallets[0]?.id ?? ''); }, [wallets, selectedId]);
   useEffect(() => setShowAllAssets(false), [selectedId]);
-  useEffect(() => { setChartOpen(false); setChartPeriod('24H'); setChartData([]); }, [selectedToken]);
+  useEffect(() => { setChartOpen(false); setChartPeriod('24H'); setChartData([]); setChartPercentage(0); }, [selectedToken]);
 
   useEffect(() => {
     if (!selectedToken || !TOKEN_DATA[selectedToken]) return;
     const token = TOKEN_DATA[selectedToken];
+    let cancelled = false;
     void (async () => {
       const data = await fetchChartOHLCV(token, chartPeriod);
+      if (cancelled) return;
       setChartData(data);
-      
-      // Calculate percentage change from chart data
-      if (data.length >= 2) {
-        const firstPrice = data[0].value;
-        const lastPrice = data[data.length - 1].value;
-        if (firstPrice > 0) {
-          const percentageChange = ((lastPrice - firstPrice) / firstPrice) * 100;
-          setChartPercentage(percentageChange);
-        }
-      } else {
-        setChartPercentage(0);
-      }
-      
-      // Only render chart if chart is open
-      if (!chartOpen || !chartContainerRef.current || !data.length) return;
-      
+      setChartPercentage(percentFromSeries(data));
+
+      if (!chartOpen || !chartContainerRef.current) return;
       if (chartRef.current) { chartRef.current.remove(); chartRef.current = null; seriesRef.current = null; }
-      
+      if (!data.length) return;
+
       const chart = createChart(chartContainerRef.current, {
         width: chartContainerRef.current.clientWidth,
         height: 220,
@@ -516,7 +470,10 @@ function App() {
       chartRef.current = chart;
       seriesRef.current = series;
     })();
-    return () => { if (chartRef.current) { chartRef.current.remove(); chartRef.current = null; seriesRef.current = null; } };
+    return () => {
+      cancelled = true;
+      if (chartRef.current) { chartRef.current.remove(); chartRef.current = null; seriesRef.current = null; }
+    };
   }, [selectedToken, chartPeriod, chartOpen]);
 
   const refreshWallet = async (wallet: TrackedWallet) => {
@@ -577,8 +534,8 @@ function App() {
     const symbol = tokenKey(asset.symbol);
     const name = tokenKey(asset.name);
     const isDust = HIDDEN_DUST_SYMBOLS.has(symbol) || [...HIDDEN_DUST_SYMBOLS].some(dust => symbol.includes(dust) || name.includes(dust));
-    if (isDust) return false;
     if (!hideDust) return true;
+    if (isDust) return false;
     return FEATURED_SYMBOLS.has(symbol) || (asset.value !== null && asset.value >= 0.01);
   }) ?? [];
   const hiddenDustCount = (selectedPortfolio?.assets.length ?? 0) - filteredAssets.length;
@@ -598,6 +555,58 @@ function App() {
               <span>{sym}</span>
             </button>
           ))}</div></div>
+
+          {selectedToken && TOKEN_DATA[selectedToken] && <div className="token-detail-panel">
+            <div className="token-panel-glow" style={{ background: TOKEN_DATA[selectedToken].borderGradient, opacity: 0.15 }}/>
+            <div className="token-panel-content" style={{ background: `linear-gradient(#0c0910,#08060b) padding-box, ${TOKEN_DATA[selectedToken].borderGradient} border-box`, border: '2px solid transparent', boxShadow: `0 24px 70px #000, 0 0 45px ${TOKEN_DATA[selectedToken].color}22` }}>
+              <div className="token-panel-header">
+                <div className="token-panel-title">
+                  <div className="token-icon">
+                    <img src={CORE_ICONS[selectedToken] || ''} alt={selectedToken} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}/>
+                    {!CORE_ICONS[selectedToken] && <span>{selectedToken.slice(0, 2)}</span>}
+                  </div>
+                  <div>
+                    <h3>{selectedToken}</h3>
+                    <div className="token-subtitle-row">
+                      <p>{TOKEN_DATA[selectedToken].subtitle}</p>
+                      <span className={`token-price-change ${chartPercentage >= 0 ? 'positive' : 'negative'}`}>
+                        {`${chartPercentage >= 0 ? '+' : ''}${chartPercentage.toFixed(2)}%`}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div className="token-panel-price">
+                  <span className="token-price-value green-value">{tokenStats[selectedToken]?.price ? money(tokenStats[selectedToken].price) : 'Loading...'}</span>
+                </div>
+              </div>
+              <div className="chart-period-selector">
+                {['24H', '7D', '30D', '3M', '6M', '1Y', 'ATL', 'All'].map(p => (
+                  <button key={p} className={`chart-period-btn ${chartPeriod === p ? 'active' : ''}`} onClick={() => setChartPeriod(p)}>{p}</button>
+                ))}
+              </div>
+              <div className="token-stats-row">
+                <div className="token-stat">
+                  <span>MC</span>
+                  <b className="green-value">{tokenStats[selectedToken]?.marketCap ? `$${tokenStats[selectedToken].marketCap.toFixed(1)}M` : 'N/A'}</b>
+                </div>
+                <div className="token-stat">
+                  <span>Liquidity</span>
+                  <b className="green-value">{tokenStats[selectedToken]?.liquidity ? `$${tokenStats[selectedToken].liquidity.toFixed(1)}M` : 'N/A'}</b>
+                </div>
+                <div className="token-stat">
+                  <span>Supply</span>
+                  <b>{tokenStats[selectedToken]?.supply || 'N/A'}</b>
+                </div>
+                <div className="token-stat">
+                  <span>Holders</span>
+                  <b>{tokenStats[selectedToken]?.holders || 'N/A'}</b>
+                </div>
+              </div>
+              <button className="token-chart-button" onClick={() => setChartOpen(v => !v)}>{chartOpen ? 'Hide Chart' : 'Show Chart'} {chartOpen ? <ChevronDown size={16} style={{ transform: 'rotate(180deg)' }}/> : <ChevronDown size={16}/>}</button>
+              {chartOpen && <div className="token-chart-container"><div ref={chartContainerRef} className="token-chart"/></div>}
+              <button className="token-close-button" onClick={() => setSelectedToken(null)}>Close</button>
+            </div>
+          </div>}
         </div>
 
         <form className={`address-panel ${addressFormOpen ? 'open' : 'collapsed'}`} onSubmit={addWallet}>
@@ -614,67 +623,6 @@ function App() {
           </div>}
         </form>
 
-        {selectedToken && TOKEN_DATA[selectedToken] && <div className="token-detail-panel">
-          <div className="token-panel-glow" style={{ background: TOKEN_DATA[selectedToken].borderGradient, opacity: 0.15 }}/>
-          <div className="token-panel-content" style={{ background: `linear-gradient(#0c0910,#08060b) padding-box, ${TOKEN_DATA[selectedToken].borderGradient} border-box`, border: '2px solid transparent', boxShadow: `0 24px 70px #000, 0 0 45px ${TOKEN_DATA[selectedToken].color}22` }}>
-            <div className="token-panel-header">
-              <div className="token-panel-title">
-                <div className="token-icon" style={{ background: TOKEN_DATA[selectedToken].borderGradient }}>
-                  <img src={CORE_ICONS[selectedToken] || ''} alt={selectedToken} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}/>
-                  <span>{selectedToken.slice(0, 2)}</span>
-                </div>
-                <div>
-                  <h3>{selectedToken}</h3>
-                  <div className="token-subtitle-row">
-                    <p>{TOKEN_DATA[selectedToken].subtitle}</p>
-                    <span className={`token-price-change ${chartOpen ? (chartPercentage >= 0 ? 'positive' : 'negative') : (() => {
-                      const stats = tokenStats[selectedToken];
-                      if (!stats) return 'positive';
-                      return stats.change24h >= 0 ? 'positive' : 'negative';
-                    })()}`}>
-                      {chartOpen ? (
-                        `${chartPercentage >= 0 ? '+' : ''}${chartPercentage.toFixed(2)}%`
-                      ) : (() => {
-                        const stats = tokenStats[selectedToken];
-                        if (!stats) return '+0.00%';
-                        return `${stats.change24h >= 0 ? '+' : ''}${stats.change24h.toFixed(2)}%`;
-                      })()}
-                    </span>
-                  </div>
-                </div>
-              </div>
-              <div className="token-panel-price">
-                <span className="token-price-value green-value">{tokenStats[selectedToken]?.price ? money(tokenStats[selectedToken].price) : 'Loading...'}</span>
-              </div>
-            </div>
-            <div className="chart-period-selector">
-              {['24H', '7D', '30D', '3M', '6M', '1Y', 'ATL', 'All'].map(p => (
-                <button key={p} className={`chart-period-btn ${chartPeriod === p ? 'active' : ''}`} onClick={() => setChartPeriod(p)}>{p}</button>
-              ))}
-            </div>
-            <div className="token-stats-row">
-              <div className="token-stat">
-                <span>MC</span>
-                <b className="green-value">{tokenStats[selectedToken]?.marketCap ? `$${tokenStats[selectedToken].marketCap.toFixed(1)}M` : 'N/A'}</b>
-              </div>
-              <div className="token-stat">
-                <span>Liquidity</span>
-                <b className="green-value">{tokenStats[selectedToken]?.liquidity ? `$${tokenStats[selectedToken].liquidity.toFixed(1)}M` : 'N/A'}</b>
-              </div>
-              <div className="token-stat">
-                <span>Supply</span>
-                <b>{tokenStats[selectedToken]?.supply || 'N/A'}</b>
-              </div>
-              <div className="token-stat">
-                <span>Holders</span>
-                <b>{tokenStats[selectedToken]?.holders || 'N/A'}</b>
-              </div>
-            </div>
-            <button className="token-chart-button" onClick={() => setChartOpen(v => !v)}>{chartOpen ? 'Hide Chart' : 'Show Chart'} {chartOpen ? <ChevronDown size={16} style={{ transform: 'rotate(180deg)' }}/> : <ChevronDown size={16}/>}</button>
-            {chartOpen && <div className="token-chart-container"><div ref={chartContainerRef} className="token-chart"/></div>}
-            <button className="token-close-button" onClick={() => setSelectedToken(null)}>Close</button>
-          </div>
-        </div>}
       </section>
 
       {wallets.length > 0 && <><section className={`tracked-section tracked-panel ${trackedCollapsed ? 'collapsed' : 'open'}`}>
