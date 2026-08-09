@@ -1,11 +1,12 @@
 import React, { FormEvent, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowRight, ArrowUpRight, ChevronDown, Copy, Eye, EyeOff, FolderPlus, LockKeyhole, Radio, RefreshCw, ScanSearch, ShieldCheck, Trash2, WalletCards, Zap } from 'lucide-react';
+import { ArrowRight, ArrowUpRight, ChevronDown, Copy, Eye, EyeOff, FolderPlus, LockKeyhole, Radio, RefreshCw, ScanSearch, Settings, ShieldCheck, Trash2, WalletCards, X } from 'lucide-react';
 import { createChart, IChartApi, ISeriesApi, LineStyle, LineSeries } from 'lightweight-charts';
 import './styles.css';
 
 type ChainNetwork = 'PulseChain' | 'Ethereum';
 type Network = ChainNetwork | 'Both';
+type Language = 'en' | 'fr' | 'es' | 'de';
 type TrackedWallet = { id: string; label: string; address: string; network: Network; groupId?: string };
 type WalletGroup = { id: string; name: string };
 type Asset = { id: string; symbol: string; name: string; amount: string; price: number | null; value: number | null; icon: string | null; network: ChainNetwork; native?: boolean; decimals?: number };
@@ -25,7 +26,20 @@ type TokenStats = {
 const STORAGE_KEY = 'pulse-vault-private-wallets-v2';
 const GROUP_STORAGE_KEY = 'pulse-vault-wallet-groups-v1';
 const NETWORK_STORAGE_KEY = 'pulse-vault-active-network-v1';
+const LANGUAGE_STORAGE_KEY = 'pulse-vault-language-v1';
 const DEFAULT_GROUP_ID = 'my-wallet';
+const LANGUAGE_OPTIONS: { id: Language; label: string; native: string }[] = [
+  { id: 'en', label: 'English', native: 'English' },
+  { id: 'fr', label: 'French', native: 'Français' },
+  { id: 'es', label: 'Spanish', native: 'Español' },
+  { id: 'de', label: 'German', native: 'Deutsch' },
+];
+const UI_COPY = {
+  en: { hero: 'Wallet portfolio.', privateView: 'One private view.', subtitle: 'Track your PulseChain and Ethereum wallets from one mobile-first, watch-only dashboard.', noConnection: 'No wallet connection', noSeed: 'No seed phrase', builtFor: 'BUILT FOR THE ECOSYSTEM', addAddress: 'ADD AN ADDRESS', enterAddress: 'Enter a public address', privateWatchlist: 'PRIVATE WATCHLIST', trackedWallets: 'Your tracked wallets', reveal: 'Reveal', hide: 'Hide', totalPortfolio: 'TOTAL PORTFOLIO', syncing: 'Syncing…', syncAll: 'Sync all', address: 'address', addresses: 'addresses', showCards: 'Show cards', hideCards: 'Hide cards', liveAssets: 'Live assets', selectedAddress: 'SELECTED ADDRESS', showDust: 'Show dust', hideDust: 'Hide dust', organize: 'ORGANIZE YOUR WATCHLIST', createAnother: 'Create another wallet', createdWallets: 'Created wallets', settings: 'Settings', language: 'Language', refresh: 'Refresh', footer: 'Watch-only portfolio intelligence' },
+  fr: { hero: 'Portefeuille crypto.', privateView: 'Une vue privée.', subtitle: 'Suivez vos portefeuilles PulseChain et Ethereum depuis un tableau de bord mobile en lecture seule.', noConnection: 'Aucune connexion wallet', noSeed: 'Aucune phrase secrète', builtFor: 'CONÇU POUR L’ÉCOSYSTÈME', addAddress: 'AJOUTER UNE ADRESSE', enterAddress: 'Saisir une adresse publique', privateWatchlist: 'LISTE PRIVÉE', trackedWallets: 'Vos portefeuilles suivis', reveal: 'Afficher', hide: 'Masquer', totalPortfolio: 'PORTEFEUILLE TOTAL', syncing: 'Synchronisation…', syncAll: 'Tout synchroniser', address: 'adresse', addresses: 'adresses', showCards: 'Afficher les cartes', hideCards: 'Masquer les cartes', liveAssets: 'Actifs en direct', selectedAddress: 'ADRESSE SÉLECTIONNÉE', showDust: 'Afficher la poussière', hideDust: 'Masquer la poussière', organize: 'ORGANISER VOTRE LISTE', createAnother: 'Créer un autre portefeuille', createdWallets: 'Portefeuilles créés', settings: 'Réglages', language: 'Langue', refresh: 'Actualiser', footer: 'Suivi de portefeuille en lecture seule' },
+  es: { hero: 'Cartera de criptomonedas.', privateView: 'Una vista privada.', subtitle: 'Sigue tus carteras de PulseChain y Ethereum desde un panel móvil de solo lectura.', noConnection: 'Sin conexión de cartera', noSeed: 'Sin frase semilla', builtFor: 'CREADO PARA EL ECOSISTEMA', addAddress: 'AÑADIR UNA DIRECCIÓN', enterAddress: 'Introduce una dirección pública', privateWatchlist: 'LISTA PRIVADA', trackedWallets: 'Tus carteras seguidas', reveal: 'Mostrar', hide: 'Ocultar', totalPortfolio: 'CARTERA TOTAL', syncing: 'Sincronizando…', syncAll: 'Sincronizar todo', address: 'dirección', addresses: 'direcciones', showCards: 'Mostrar tarjetas', hideCards: 'Ocultar tarjetas', liveAssets: 'Activos en directo', selectedAddress: 'DIRECCIÓN SELECCIONADA', showDust: 'Mostrar polvo', hideDust: 'Ocultar polvo', organize: 'ORGANIZA TU LISTA', createAnother: 'Crear otra cartera', createdWallets: 'Carteras creadas', settings: 'Ajustes', language: 'Idioma', refresh: 'Actualizar', footer: 'Seguimiento de cartera de solo lectura' },
+  de: { hero: 'Krypto-Portfolio.', privateView: 'Eine private Ansicht.', subtitle: 'Verfolge PulseChain- und Ethereum-Wallets in einem mobilen Dashboard mit Lesezugriff.', noConnection: 'Keine Wallet-Verbindung', noSeed: 'Keine Seed-Phrase', builtFor: 'FÜR DAS ÖKOSYSTEM ENTWICKELT', addAddress: 'ADRESSE HINZUFÜGEN', enterAddress: 'Öffentliche Adresse eingeben', privateWatchlist: 'PRIVATE BEOBACHTUNGSLISTE', trackedWallets: 'Deine beobachteten Wallets', reveal: 'Anzeigen', hide: 'Ausblenden', totalPortfolio: 'GESAMTPORTFOLIO', syncing: 'Synchronisieren…', syncAll: 'Alle synchronisieren', address: 'Adresse', addresses: 'Adressen', showCards: 'Karten anzeigen', hideCards: 'Karten ausblenden', liveAssets: 'Live-Vermögen', selectedAddress: 'AUSGEWÄHLTE ADRESSE', showDust: 'Dust anzeigen', hideDust: 'Dust ausblenden', organize: 'BEOBACHTUNGSLISTE ORGANISIEREN', createAnother: 'Weiteres Wallet erstellen', createdWallets: 'Erstellte Wallets', settings: 'Einstellungen', language: 'Sprache', refresh: 'Aktualisieren', footer: 'Portfolio-Übersicht mit Lesezugriff' },
+} as const;
 const FEATURED_SYMBOLS = new Set(['PLS', 'WPLS', 'ETH', 'WETH', 'PLSX', 'HEX', 'pHEX', 'INC', 'PRVX', 'HDRN', 'ICSA', 'PDI', 'ASIC', 'PDA', 'USDC']);
 const HIDDEN_DUST_SYMBOLS = new Set(['FTVC', 'SCIVVE', 'SCIVVI', 'SCIVVII', 'SCIVV', 'HXY']);
 const WRAPPED_NATIVE: Record<ChainNetwork, string> = {
@@ -168,6 +182,18 @@ function readNetwork(): Network {
     const saved = localStorage.getItem(NETWORK_STORAGE_KEY);
     return saved === 'Ethereum' || saved === 'Both' ? saved : 'PulseChain';
   } catch { return 'PulseChain'; }
+}
+
+function readLanguage(): Language {
+  try {
+    const saved = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+    return saved === 'fr' || saved === 'es' || saved === 'de' ? saved : 'en';
+  } catch { return 'en'; }
+}
+
+function defaultSelectedWalletId() {
+  const savedWallets = readWallets();
+  return savedWallets.find(wallet => /^Wallet\s+0*1$/i.test(wallet.label.trim()))?.id ?? savedWallets[0]?.id ?? '';
 }
 
 function short(address: string) { return `${address.slice(0, 7)}…${address.slice(-5)}`; }
@@ -640,6 +666,8 @@ function App() {
   const [pendingDeleteGroupId, setPendingDeleteGroupId] = useState<string | null>(null);
   const [trackedCollapsed, setTrackedCollapsed] = useState(true);
   const [newWalletPanelOpen, setNewWalletPanelOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [language, setLanguage] = useState<Language>(readLanguage);
   const [addressFormOpen, setAddressFormOpen] = useState(false);
   const [label, setLabel] = useState('');
   const [address, setAddress] = useState('');
@@ -648,7 +676,7 @@ function App() {
   const [formNotice, setFormNotice] = useState('');
   const [copied, setCopied] = useState('');
   const [privateMode, setPrivateMode] = useState(false);
-  const [selectedId, setSelectedId] = useState(() => readWallets()[0]?.id ?? '');
+  const [selectedId, setSelectedId] = useState(defaultSelectedWalletId);
   const [portfolios, setPortfolios] = useState<Record<string, Portfolio>>({});
   const [showAllAssets, setShowAllAssets] = useState(false);
   const [hideDust, setHideDust] = useState(true);
@@ -668,6 +696,7 @@ function App() {
   useEffect(() => localStorage.setItem(STORAGE_KEY, JSON.stringify(wallets)), [wallets]);
   useEffect(() => localStorage.setItem(GROUP_STORAGE_KEY, JSON.stringify(walletGroups)), [walletGroups]);
   useEffect(() => localStorage.setItem(NETWORK_STORAGE_KEY, network), [network]);
+  useEffect(() => { localStorage.setItem(LANGUAGE_STORAGE_KEY, language); document.documentElement.lang = language; }, [language]);
   useEffect(() => { if (!wallets.some(wallet => wallet.id === selectedId)) setSelectedId(wallets[0]?.id ?? ''); }, [wallets, selectedId]);
   useEffect(() => setShowAllAssets(false), [selectedId]);
   useEffect(() => { setChartOpen(false); setChartPeriod('24H'); setChartData([]); setChartPercentage(0); setChartLoading(false); }, [selectedToken]);
@@ -864,16 +893,17 @@ function App() {
   }) ?? [];
   const hiddenDustCount = (selectedPortfolio?.assets.length ?? 0) - filteredAssets.length;
   const visibleAssets = filteredAssets.slice(0, showAllAssets ? undefined : 30);
+  const ui = UI_COPY[language];
 
   return <div className="landing-shell">
     <main className="landing-main">
       <section className="intake-section">
         <div className="ambient ambient-one"/><div className="ambient ambient-two"/>
         <div className="intake-copy">
-          <div className="hero-title-row"><h1>Wallet portfolio.<br/><span>One private view.</span></h1></div>
-          <p>Track your PulseChain and Ethereum wallets from one mobile-first, watch-only dashboard.</p>
-          <div className="trust-row"><span><LockKeyhole size={15}/>No wallet connection</span><span><ShieldCheck size={15}/>No seed phrase</span><span className="trust-live"><Radio size={12}/>Live</span></div>
-          <div className="ecosystem-strip"><span>BUILT FOR THE ECOSYSTEM</span><div>{['ETH', 'PLS', 'HEX', 'pHEX', 'PLSX', 'PRVX', 'INC'].map(sym => (
+          <div className="hero-title-row"><h1>{ui.hero}<br/><span>{ui.privateView}</span></h1></div>
+          <p>{ui.subtitle}</p>
+          <div className="trust-row"><span><LockKeyhole size={15}/>{ui.noConnection}</span><span><ShieldCheck size={15}/>{ui.noSeed}</span><span className="trust-live"><Radio size={12}/>Live</span></div>
+          <div className="ecosystem-strip"><span>{ui.builtFor}</span><div>{['ETH', 'PLS', 'HEX', 'pHEX', 'PLSX', 'PRVX', 'INC'].map(sym => (
             <button key={sym} className={`eco-token-btn ${selectedToken === sym ? 'active' : ''}`} onClick={() => { setSelectedToken(sym); if (!tokenStats[sym]) { setTokenStats(current => ({ ...current, [sym]: { price: 0, change24h: 0, change7d: 0, change30d: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA[sym]).then(stats => setTokenStats(current => ({ ...current, [sym]: stats }))); } }}>
               <img src={CORE_ICONS[sym] || ''} alt={sym} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}/>
               <span>{sym}</span>
@@ -939,7 +969,7 @@ function App() {
 
         <form className={`address-panel ${addressFormOpen ? 'open' : 'collapsed'}`} onSubmit={addWallet}>
           <div className="panel-glow"/>
-          <button className="panel-heading panel-fold" type="button" onClick={() => setAddressFormOpen(value => !value)} aria-expanded={addressFormOpen}><div className="wallet-orbit"><ScanSearch size={24}/></div><div><p className="eyebrow">ADD AN ADDRESS</p><h2>Enter a public address</h2></div><ChevronDown size={18}/></button>
+          <button className="panel-heading panel-fold" type="button" onClick={() => setAddressFormOpen(value => !value)} aria-expanded={addressFormOpen}><div className="wallet-orbit"><ScanSearch size={24}/></div><div><p className="eyebrow">{ui.addAddress}</p><h2>{ui.enterAddress}</h2></div><ChevronDown size={18}/></button>
           {addressFormOpen && <div className="address-panel-body">
             <p className="panel-note">Your address stays on this device. It is never added to our code or public GitHub.</p>
             <label className="field-label">Wallet name <span>optional</span><input value={label} onChange={e => setLabel(e.target.value)} placeholder="Give this wallet a private label" autoComplete="off"/></label>
@@ -958,14 +988,14 @@ function App() {
         <div className="tracked-glow"/>
         <div className="panel-heading panel-fold" role="button" tabIndex={0} onClick={() => setTrackedCollapsed(value => !value)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setTrackedCollapsed(value => !value); } }} aria-expanded={!trackedCollapsed}>
           <div className="wallet-orbit"><WalletCards size={24}/></div>
-          <div className="panel-heading-text"><p className="eyebrow">PRIVATE WATCHLIST</p><h2>Your tracked wallets</h2></div>
-          <button className="panel-action-btn" onClick={(e) => { e.stopPropagation(); setPrivateMode(v => !v); }}>{privateMode ? <EyeOff size={13}/> : <Eye size={13}/>} {privateMode ? 'Reveal' : 'Hide'}</button>
+          <div className="panel-heading-text"><p className="eyebrow">{ui.privateWatchlist}</p><h2>{ui.trackedWallets}</h2></div>
+          <button className="panel-action-btn" onClick={(e) => { e.stopPropagation(); setPrivateMode(v => !v); }}>{privateMode ? <EyeOff size={13}/> : <Eye size={13}/>} {privateMode ? ui.reveal : ui.hide}</button>
           <ChevronDown size={18}/>
         </div>
         {!trackedCollapsed && <div className="vault-board">
           <div className="vault-summary">
-            <div className="portfolio-totals"><div><span>TOTAL PORTFOLIO · {networkLabel(network)}</span><strong>{privateMode ? '••••••' : networkLoading ? 'Syncing…' : knownValue > 0 ? money(knownValue) : '$0.00'}</strong><small>{wallets.length} {wallets.length === 1 ? 'address' : 'addresses'} · {networkLabel(network)}</small></div>{selectedWallet && <div className="selected-total"><span>{selectedWallet.label} · {networkLabel(network)}</span><strong>{privateMode ? '••••••' : networkLoading ? 'Syncing…' : selectedValue > 0 ? money(selectedValue) : '$0.00'}</strong><small>{privateMode ? 'Network values hidden' : network === 'Both' ? `ETH ${money(selectedEthereumValue)} · PLS ${money(selectedPulseValue)}` : `${networkLabel(network)} · all priced coins`}</small></div>}</div>
-            {selectedWallet && <button className={`sync-control ${networkLoading ? 'spinning' : ''}`} onClick={() => wallets.forEach(wallet => void refreshWallet(wallet, network))} disabled={networkLoading}><RefreshCw size={16}/>{networkLoading ? 'Syncing' : 'Sync all'}</button>}
+            <div className="portfolio-totals"><div><span>{ui.totalPortfolio} · {networkLabel(network)}</span><strong>{privateMode ? '••••••' : networkLoading ? ui.syncing : knownValue > 0 ? money(knownValue) : '$0.00'}</strong><small>{wallets.length} {wallets.length === 1 ? ui.address : ui.addresses} · {networkLabel(network)}</small></div>{selectedWallet && <div className="selected-total"><span>{selectedWallet.label} · {networkLabel(network)}</span><strong>{privateMode ? '••••••' : networkLoading ? ui.syncing : selectedValue > 0 ? money(selectedValue) : '$0.00'}</strong><small>{privateMode ? 'Network values hidden' : network === 'Both' ? `ETH ${money(selectedEthereumValue)} · PLS ${money(selectedPulseValue)}` : `${networkLabel(network)} · all priced coins`}</small></div>}</div>
+            {selectedWallet && <button className={`sync-control ${networkLoading ? 'spinning' : ''}`} onClick={() => wallets.forEach(wallet => void refreshWallet(wallet, network))} disabled={networkLoading}><RefreshCw size={16}/>{networkLoading ? ui.syncing : ui.syncAll}</button>}
           </div>
           <div className="wallet-groups">
             {walletGroups.map(group => {
@@ -973,7 +1003,7 @@ function App() {
               const groupValue = groupWallets.reduce((total, wallet) => { const portfolio = portfolios[wallet.id]; return total + (portfolio?.network === network ? portfolio.assets.reduce((sum, asset) => sum + (asset.value ?? 0), 0) : 0); }, 0);
               const collapsed = collapsedGroups.includes(group.id);
               return <section className="wallet-group" key={group.id}>
-                <div className="wallet-group-head"><button className="group-fold" onClick={() => setCollapsedGroups(current => collapsed ? current.filter(id => id !== group.id) : [...current, group.id])} aria-expanded={!collapsed}><ChevronDown size={16}/><span>{groupWallets.length} {groupWallets.length === 1 ? 'address' : 'addresses'} · {collapsed ? 'Show cards' : 'Hide cards'}</span></button><input aria-label={`Name for ${group.name}`} value={group.name} onChange={event => renameGroup(group.id, event.target.value)}/><b>{privateMode ? '••••' : groupValue > 0 ? money(groupValue) : 'Live assets'}</b></div>
+                <div className="wallet-group-head"><button className="group-fold" onClick={() => setCollapsedGroups(current => collapsed ? current.filter(id => id !== group.id) : [...current, group.id])} aria-expanded={!collapsed}><ChevronDown size={16}/><span>{groupWallets.length} {groupWallets.length === 1 ? ui.address : ui.addresses} · {collapsed ? ui.showCards : ui.hideCards}</span></button><input aria-label={`Name for ${group.name}`} value={group.name} onChange={event => renameGroup(group.id, event.target.value)}/><b>{privateMode ? '••••' : groupValue > 0 ? money(groupValue) : ui.liveAssets}</b></div>
                 {!collapsed && <div className="address-rail" aria-label={`${group.name} saved addresses`}>
                   {groupWallets.map((wallet, index) => <button className={`mini-wallet n${index % 4} ${wallet.id === selectedWallet?.id ? 'selected' : ''}`} key={wallet.id} onClick={() => setSelectedId(wallet.id)}>
                     <span className="mini-number">{String(index + 1).padStart(2, '0')}</span><div><small>{networkLabel(network)}</small><b>{wallet.label}</b><em>{privateMode ? '••••••••••••••••' : short(wallet.address)}</em></div><i/>
@@ -984,7 +1014,7 @@ function App() {
             })}
           </div>
           {!trackedCollapsed && selectedWallet && <div className="asset-panel">
-            <div className="asset-panel-head"><div><p className="eyebrow">SELECTED ADDRESS · {networkLabel(network)}</p><input className="address-name-input" aria-label="Rename selected wallet" value={selectedWallet.label} onChange={event => renameWallet(selectedWallet.id, event.target.value)}/><button onClick={() => copy(selectedWallet.address, selectedWallet.id)}>{privateMode ? '••••••••••••••••' : short(selectedWallet.address)} {copied === selectedWallet.id ? <em>COPIED</em> : <Copy size={13}/>}</button></div><div className="selected-actions"><button className={hideDust ? 'dust-active' : ''} onClick={() => setHideDust(value => !value)}>{hideDust ? `Show dust${hiddenDustCount ? ` · ${hiddenDustCount} hidden` : ''}` : 'Hide dust'}</button>{network !== 'PulseChain' && <a href={`https://etherscan.io/address/${selectedWallet.address}`} target="_blank" rel="noreferrer" aria-label="Open Ethereum explorer">ETH <ArrowUpRight size={15}/></a>}{network !== 'Ethereum' && <a href={`https://scan.pulsechain.com/address/${selectedWallet.address}`} target="_blank" rel="noreferrer" aria-label="Open PulseChain explorer">PLS <ArrowUpRight size={15}/></a>}<button onClick={() => setWallets(wallets.filter(wallet => wallet.id !== selectedWallet.id))} aria-label={`Remove ${selectedWallet.label}`}><Trash2 size={16}/></button></div></div>
+            <div className="asset-panel-head"><div><p className="eyebrow">{ui.selectedAddress} · {networkLabel(network)}</p><input className="address-name-input" aria-label="Rename selected wallet" value={selectedWallet.label} onChange={event => renameWallet(selectedWallet.id, event.target.value)}/><button onClick={() => copy(selectedWallet.address, selectedWallet.id)}>{privateMode ? '••••••••••••••••' : short(selectedWallet.address)} {copied === selectedWallet.id ? <em>COPIED</em> : <Copy size={13}/>}</button></div><div className="selected-actions"><button className={hideDust ? 'dust-active' : ''} onClick={() => setHideDust(value => !value)}>{hideDust ? `${ui.showDust}${hiddenDustCount ? ` · ${hiddenDustCount} hidden` : ''}` : ui.hideDust}</button>{network !== 'PulseChain' && <a href={`https://etherscan.io/address/${selectedWallet.address}`} target="_blank" rel="noreferrer" aria-label="Open Ethereum explorer">ETH <ArrowUpRight size={15}/></a>}{network !== 'Ethereum' && <a href={`https://scan.pulsechain.com/address/${selectedWallet.address}`} target="_blank" rel="noreferrer" aria-label="Open PulseChain explorer">PLS <ArrowUpRight size={15}/></a>}<button onClick={() => setWallets(wallets.filter(wallet => wallet.id !== selectedWallet.id))} aria-label={`Remove ${selectedWallet.label}`}><Trash2 size={16}/></button></div></div>
             <div className="asset-list">
               {(!selectedPortfolio || selectedPortfolio.loading) && (selectedPortfolio?.assets.length ?? 0) === 0 && <div className="asset-message"><RefreshCw size={20} className="spin-icon"/>Reading live {networkLabel(network)} assets…</div>}
               {selectedPortfolio?.error && <div className="asset-message error-message">{selectedPortfolio.error}<button onClick={() => refreshWallet(selectedWallet)}>Try again</button></div>}
@@ -999,11 +1029,12 @@ function App() {
             <div className="live-data-note"><Radio size={11}/>Live read-only data from {networkLabel(network)} · {selectedPortfolio?.refreshedAt ? `updated ${new Date(selectedPortfolio.refreshedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'waiting to sync'}</div>
           </div>}
         </div>}
-      </section><div className={`new-wallet-panel ${newWalletPanelOpen ? 'open' : ''}`}><div className="new-wallet-glow"/><button className="new-wallet-fold" onClick={() => setNewWalletPanelOpen(value => !value)} aria-expanded={newWalletPanelOpen}><span className="new-wallet-title"><i className="wallet-orbit"><FolderPlus size={20}/></i><span><small>ORGANIZE YOUR WATCHLIST</small><b>Create another wallet</b></span></span><ChevronDown size={17}/></button>{newWalletPanelOpen && <div className="new-wallet-body"><p className="panel-note">Create a separate wallet for personal addresses, whales, or any watchlist you choose.</p><div className="created-wallets"><p>Created wallets</p>{walletGroups.map(group => { const addressCount = wallets.filter(wallet => (wallet.groupId ?? DEFAULT_GROUP_ID) === group.id).length; const confirming = pendingDeleteGroupId === group.id; return <article className={`created-wallet-row ${confirming ? 'confirming' : ''}`} key={group.id}><div className="created-wallet-summary"><span><b>{group.name}</b><small>{addressCount} {addressCount === 1 ? 'saved address' : 'saved addresses'}</small></span>{group.id === DEFAULT_GROUP_ID ? <em>Default</em> : <button type="button" className="wallet-delete-trigger" onClick={() => setPendingDeleteGroupId(group.id)} aria-label={`Delete ${group.name}`}><Trash2 size={15}/>Delete</button>}</div>{confirming && <div className="wallet-delete-warning" role="alertdialog" aria-label={`Confirm deletion of ${group.name}`}><b>Are you sure you want to delete this wallet?</b><small>{addressCount ? `This removes ${addressCount} saved ${addressCount === 1 ? 'address' : 'addresses'} from this device.` : 'This wallet is empty and will be removed from this device.'}</small><div><button type="button" onClick={() => setPendingDeleteGroupId(null)}>Cancel</button><button type="button" className="confirm-delete" onClick={() => deleteGroup(group.id)}>Delete wallet</button></div></div>}</article>; })}</div><div className="group-creator"><FolderPlus size={15}/><input aria-label="New wallet group name" value={newGroupName} onChange={event => setNewGroupName(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addGroup(); } }} placeholder="Name a new wallet, e.g. Whales"/><button onClick={addGroup} disabled={!newGroupName.trim()}>Create wallet</button></div></div>}</div></>}
+      </section><div className={`new-wallet-panel ${newWalletPanelOpen ? 'open' : ''}`}><div className="new-wallet-glow"/><button className="new-wallet-fold" onClick={() => setNewWalletPanelOpen(value => !value)} aria-expanded={newWalletPanelOpen}><span className="new-wallet-title"><i className="wallet-orbit"><FolderPlus size={20}/></i><span><small>{ui.organize}</small><b>{ui.createAnother}</b></span></span><ChevronDown size={17}/></button>{newWalletPanelOpen && <div className="new-wallet-body"><p className="panel-note">Create a separate wallet for personal addresses, whales, or any watchlist you choose.</p><div className="created-wallets"><p>{ui.createdWallets}</p>{walletGroups.map(group => { const addressCount = wallets.filter(wallet => (wallet.groupId ?? DEFAULT_GROUP_ID) === group.id).length; const confirming = pendingDeleteGroupId === group.id; return <article className={`created-wallet-row ${confirming ? 'confirming' : ''}`} key={group.id}><div className="created-wallet-summary"><span><b>{group.name}</b><small>{addressCount} {addressCount === 1 ? ui.address : ui.addresses}</small></span>{group.id === DEFAULT_GROUP_ID ? <em>Default</em> : <button type="button" className="wallet-delete-trigger" onClick={() => setPendingDeleteGroupId(group.id)} aria-label={`Delete ${group.name}`}><Trash2 size={15}/>Delete</button>}</div>{confirming && <div className="wallet-delete-warning" role="alertdialog" aria-label={`Confirm deletion of ${group.name}`}><b>Are you sure you want to delete this wallet?</b><small>{addressCount ? `This removes ${addressCount} saved ${addressCount === 1 ? 'address' : 'addresses'} from this device.` : 'This wallet is empty and will be removed from this device.'}</small><div><button type="button" onClick={() => setPendingDeleteGroupId(null)}>Cancel</button><button type="button" className="confirm-delete" onClick={() => deleteGroup(group.id)}>Delete wallet</button></div></div>}</article>; })}</div><div className="group-creator"><FolderPlus size={15}/><input aria-label="New wallet group name" value={newGroupName} onChange={event => setNewGroupName(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addGroup(); } }} placeholder="Name a new wallet, e.g. Whales"/><button onClick={addGroup} disabled={!newGroupName.trim()}>Create wallet</button></div></div>}</div></>}
 
       {wallets.length === 0 && <section className="next-preview"><p className="eyebrow">WHAT COMES NEXT</p><h2>Your wallet becomes a living dashboard.</h2><div className="preview-panels"><div/><div/><div/></div><p>Token panels inspired by your reference design will appear here after we connect live portfolio data.</p></section>}
     </main>
-    <footer><div className="footer-tools"><div className="brand mini"><Zap size={14}/>PULSE<span>VAULT</span></div><button className="refresh-button" onClick={refreshApp} aria-label="Refresh PulseVault"><RefreshCw size={14}/>Refresh</button></div><span>Watch-only portfolio intelligence</span></footer>
+    {settingsOpen && <section className="settings-panel" aria-label={ui.settings}><div className="settings-head"><div><p className="eyebrow">{ui.settings.toUpperCase()}</p><h2>{ui.language}</h2></div><button type="button" onClick={() => setSettingsOpen(false)} aria-label="Close settings"><X size={18}/></button></div><div className="language-options" role="group" aria-label={ui.language}>{LANGUAGE_OPTIONS.map(option => <button type="button" key={option.id} className={language === option.id ? 'active' : ''} aria-pressed={language === option.id} onClick={() => setLanguage(option.id)}><span>{option.native}</span><small>{option.label}</small></button>)}</div></section>}
+    <footer><div className="footer-tools"><button className={`settings-button ${settingsOpen ? 'active' : ''}`} type="button" onClick={() => setSettingsOpen(value => !value)} aria-expanded={settingsOpen}><Settings size={15}/>{ui.settings}</button><button className="refresh-button" onClick={refreshApp} aria-label="Refresh PulseVault"><RefreshCw size={14}/>{ui.refresh}</button></div><span>{ui.footer}</span></footer>
   </div>;
 }
 
