@@ -414,11 +414,12 @@ function percentFromSeries(data: { time: number; value: number }[]): number {
   return ((last - first) / first) * 100;
 }
 
-function fallbackPercentage(stats: TokenStats | undefined, period: string): number {
-  if (!stats) return 0;
+function fallbackPercentage(stats: TokenStats | undefined, period: string): number | null {
+  if (!stats) return null;
   if (period === '24H') return stats.change24h;
   if (period === '7D') return stats.change7d;
-  return stats.change30d;
+  if (period === '30D') return stats.change30d;
+  return null;
 }
 
 function App() {
@@ -445,7 +446,7 @@ function App() {
   const [chartOpen, setChartOpen] = useState(false);
   const [chartPeriod, setChartPeriod] = useState('24H');
   const [chartData, setChartData] = useState<{ time: number; value: number }[]>([]);
-  const [chartPercentage, setChartPercentage] = useState(0);
+  const [chartPercentage, setChartPercentage] = useState<number | null>(0);
   const [chartLoading, setChartLoading] = useState(false);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -602,8 +603,8 @@ function App() {
                     <h3>{selectedToken}</h3>
                     <div className="token-subtitle-row">
                       <p>{TOKEN_DATA[selectedToken].subtitle}</p>
-                      <span className={`token-price-change ${chartPercentage >= 0 ? 'positive' : 'negative'}`}>
-                        {chartLoading ? 'Loading' : `${chartPercentage >= 0 ? '+' : ''}${chartPercentage.toFixed(2)}%`} <small>{chartPeriod}</small>
+                      <span className={`token-price-change ${chartPercentage === null || chartPercentage >= 0 ? 'positive' : 'negative'}`}>
+                        {chartLoading ? 'Loading' : chartPercentage === null ? 'Unavailable' : `${chartPercentage >= 0 ? '+' : ''}${chartPercentage.toFixed(2)}%`} <small>{chartPeriod}</small>
                       </span>
                     </div>
                   </div>
