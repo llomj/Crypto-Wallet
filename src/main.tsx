@@ -4,7 +4,8 @@ import { ArrowRight, ArrowUpRight, ChevronDown, Copy, Eye, EyeOff, FolderPlus, L
 import { createChart, IChartApi, ISeriesApi, LineStyle, LineSeries } from 'lightweight-charts';
 import './styles.css';
 
-type Network = 'PulseChain' | 'Ethereum';
+type ChainNetwork = 'PulseChain' | 'Ethereum';
+type Network = ChainNetwork | 'Both';
 type TrackedWallet = { id: string; label: string; address: string; network: Network; groupId?: string };
 type WalletGroup = { id: string; name: string };
 type Asset = { id: string; symbol: string; name: string; amount: string; price: number | null; value: number | null; icon: string | null; native?: boolean };
@@ -26,7 +27,7 @@ const GROUP_STORAGE_KEY = 'pulse-vault-wallet-groups-v1';
 const DEFAULT_GROUP_ID = 'my-wallet';
 const FEATURED_SYMBOLS = new Set(['PLS', 'WPLS', 'ETH', 'WETH', 'PLSX', 'HEX', 'pHEX', 'INC', 'PRVX', 'HDRN', 'ICSA', 'PDI', 'ASIC', 'PDA', 'USDC']);
 const HIDDEN_DUST_SYMBOLS = new Set(['FTVC', 'SCIVVE', 'SCIVVI', 'SCIVVII', 'SCIVV', 'HXY']);
-const WRAPPED_NATIVE: Record<Network, string> = {
+const WRAPPED_NATIVE: Record<ChainNetwork, string> = {
   PulseChain: '0xA1077a294dDe1B09bB078844Df40758a5D0f9a27',
   Ethereum: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
 };
@@ -142,6 +143,7 @@ function readGroups(): WalletGroup[] {
 function short(address: string) { return `${address.slice(0, 7)}…${address.slice(-5)}`; }
 function tokenKey(symbol: string) { return symbol.toUpperCase().replace(/[^A-Z0-9]/g, ''); }
 function validAddress(value: string) { return /^0x[a-fA-F0-9]{40}$/.test(value.trim()); }
+function networkLabel(network: Network) { return network === 'Both' ? 'PulseChain + Ethereum' : network; }
 function formatUnits(value: string, decimals = 18) {
   try {
     const negative = value.startsWith('-');
@@ -178,7 +180,7 @@ async function jsonRequest(url: string, timeout = 16000) {
   } finally { window.clearTimeout(timer); }
 }
 
-async function enrichMarketAssets(assets: Asset[], network: Network) {
+async function enrichMarketAssets(assets: Asset[], network: ChainNetwork) {
   const chainId = network === 'PulseChain' ? 'pulsechain' : 'ethereum';
   const prioritized = [...assets.filter(asset => FEATURED_SYMBOLS.has(tokenKey(asset.symbol))), ...assets];
   const unique = prioritized.filter((asset, index, list) => list.findIndex(item => item.id.toLowerCase() === asset.id.toLowerCase()) === index).slice(0, 40);
@@ -203,18 +205,18 @@ async function enrichMarketAssets(assets: Asset[], network: Network) {
   }).sort((left, right) => (right.value ?? -1) - (left.value ?? -1));
 }
 
-async function loadPortfolio(wallet: TrackedWallet): Promise<Asset[]> {
-  const base = wallet.network === 'PulseChain' ? 'https://api.scan.pulsechain.com' : 'https://eth.blockscout.com';
-  const nativeSymbol = wallet.network === 'PulseChain' ? 'PLS' : 'ETH';
-  const nativeName = wallet.network === 'PulseChain' ? 'PulseChain' : 'Ethereum';
+async function loadChainPortfolio(address: string, network: ChainNetwork): Promise<Asset[]> {
+  const base = network === 'PulseChain' ? 'https://api.scan.pulsechain.com' : 'https://eth.blockscout.com';
+  const nativeSymbol = network === 'PulseChain' ? 'PLS' : 'ETH';
+  const nativeName = network === 'PulseChain' ? 'PulseChain' : 'Ethereum';
   try {
     const [addressData, tokenData] = await Promise.all([
-      jsonRequest(`${base}/api/v2/addresses/${wallet.address}`),
-      jsonRequest(`${base}/api/v2/addresses/${wallet.address}/token-balances`),
+      jsonRequest(`${base}/api/v2/addresses/${address}`),
+      jsonRequest(`${base}/api/v2/addresses/${address}/token-balances`),
     ]);
     const nativeAmount = formatUnits(String(addressData.coin_balance ?? '0'), 18);
     const nativePrice = addressData.exchange_rate === null || addressData.exchange_rate === undefined ? null : Number(addressData.exchange_rate);
-    const assets: Asset[] = [{ id: `${wallet.network}-native`, symbol: nativeSymbol, name: nativeName, amount: nativeAmount, price: nativePrice, value: nativePrice === null ? null : Number(nativeAmount) * nativePrice, icon: null, native: true }];
+    const assets: Asset[] = [{ id: `${network}-native`, symbol: nativeSymbol, name: nativeName, amount: nativeAmount, price: nativePrice, value: nativePrice === null ? null : Number(nativeAmount) * nativePrice, icon: null, native: true }];
     for (const item of Array.isArray(tokenData) ? tokenData : []) {
       const token = item.token ?? {};
       if (token.type && token.type !== 'ERC-20') continue;
@@ -224,21 +226,35 @@ async function loadPortfolio(wallet: TrackedWallet): Promise<Asset[]> {
       const price = token.exchange_rate === null || token.exchange_rate === undefined ? null : Number(token.exchange_rate);
       assets.push({ id: token.address_hash ?? token.address ?? `${token.symbol}-${assets.length}`, symbol: token.symbol || 'TOKEN', name: token.name || 'Unknown token', amount, price, value: price === null ? null : Number(amount) * price, icon: token.icon_url || null });
     }
-    return await enrichMarketAssets(assets, wallet.network);
+    return await enrichMarketAssets(assets, network);
   } catch {
     const [nativeData, tokensData] = await Promise.all([
-      jsonRequest(`${base}/api?module=account&action=balance&address=${wallet.address}`),
-      jsonRequest(`${base}/api?module=account&action=tokenlist&address=${wallet.address}`),
+      jsonRequest(`${base}/api?module=account&action=balance&address=${address}`),
+      jsonRequest(`${base}/api?module=account&action=tokenlist&address=${address}`),
     ]);
     const nativeAmount = formatUnits(String(nativeData.result ?? '0'), 18);
-    const assets: Asset[] = [{ id: `${wallet.network}-native`, symbol: nativeSymbol, name: nativeName, amount: nativeAmount, price: null, value: null, icon: null, native: true }];
+    const assets: Asset[] = [{ id: `${network}-native`, symbol: nativeSymbol, name: nativeName, amount: nativeAmount, price: null, value: null, icon: null, native: true }];
     for (const token of Array.isArray(tokensData.result) ? tokensData.result : []) {
       const amount = formatUnits(String(token.balance ?? '0'), Number(token.decimals ?? 18));
       if (Number(amount) === 0) continue;
       assets.push({ id: token.contractAddress ?? `${token.symbol}-${assets.length}`, symbol: token.symbol || 'TOKEN', name: token.name || 'Unknown token', amount, price: null, value: null, icon: null });
     }
-    return await enrichMarketAssets(assets, wallet.network);
+    return await enrichMarketAssets(assets, network);
   }
+}
+
+async function loadPortfolio(wallet: TrackedWallet): Promise<Asset[]> {
+  if (wallet.network !== 'Both') return loadChainPortfolio(wallet.address, wallet.network);
+  const chainResults = await Promise.allSettled([
+    loadChainPortfolio(wallet.address, 'PulseChain'),
+    loadChainPortfolio(wallet.address, 'Ethereum'),
+  ]);
+  const networks: ChainNetwork[] = ['PulseChain', 'Ethereum'];
+  const combined = chainResults.flatMap((result, index) => result.status === 'fulfilled'
+    ? result.value.map(asset => ({ ...asset, id: `${networks[index]}:${asset.id}` }))
+    : []);
+  if (!combined.length) throw new Error('Both network portfolio requests failed.');
+  return combined.sort((left, right) => (right.value ?? -1) - (left.value ?? -1));
 }
 
 async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
@@ -320,8 +336,10 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
 
     // Seed period % from chart series so 7D/30D work immediately
     try {
-      const series7 = await fetchChartOHLCV(token, '7D');
-      const series30 = await fetchChartOHLCV(token, '30D');
+      const [series7, series30] = await Promise.all([
+        fetchChartOHLCV(token, '7D'),
+        fetchChartOHLCV(token, '30D'),
+      ]);
       change7d = percentFromSeries(series7) || change24h;
       change30d = percentFromSeries(series30) || change24h;
     } catch {
@@ -376,7 +394,7 @@ async function fetchChartOHLCV(token: TokenInfo, period: string): Promise<{ time
     };
     const coinId = coinGeckoIds[token.symbol];
     if (!coinId) return [];
-    const periodDays: Record<string, number> = { '24H': 1, '7D': 7, '30D': 30, '3M': 90, '6M': 180, '1Y': 365, ATL: 365, All: 365 };
+    const periodDays: Record<string, number | string> = { '24H': 1, '7D': 7, '30D': 30, '3M': 90, '6M': 180, '1Y': 365, ATL: 'max', All: 'max' };
     const days = periodDays[period] || 30;
     const data = await jsonRequest(`https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=usd&days=${days}`, 15000);
     if (!data?.prices) return [];
@@ -394,6 +412,13 @@ function percentFromSeries(data: { time: number; value: number }[]): number {
   const last = data[data.length - 1].value;
   if (!(first > 0) || !Number.isFinite(first) || !Number.isFinite(last)) return 0;
   return ((last - first) / first) * 100;
+}
+
+function fallbackPercentage(stats: TokenStats | undefined, period: string): number {
+  if (!stats) return 0;
+  if (period === '24H') return stats.change24h;
+  if (period === '7D') return stats.change7d;
+  return stats.change30d;
 }
 
 function App() {
@@ -421,6 +446,7 @@ function App() {
   const [chartPeriod, setChartPeriod] = useState('24H');
   const [chartData, setChartData] = useState<{ time: number; value: number }[]>([]);
   const [chartPercentage, setChartPercentage] = useState(0);
+  const [chartLoading, setChartLoading] = useState(false);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<any>(null);
@@ -429,17 +455,19 @@ function App() {
   useEffect(() => localStorage.setItem(GROUP_STORAGE_KEY, JSON.stringify(walletGroups)), [walletGroups]);
   useEffect(() => { if (!wallets.some(wallet => wallet.id === selectedId)) setSelectedId(wallets[0]?.id ?? ''); }, [wallets, selectedId]);
   useEffect(() => setShowAllAssets(false), [selectedId]);
-  useEffect(() => { setChartOpen(false); setChartPeriod('24H'); setChartData([]); setChartPercentage(0); }, [selectedToken]);
+  useEffect(() => { setChartOpen(false); setChartPeriod('24H'); setChartData([]); setChartPercentage(0); setChartLoading(false); }, [selectedToken]);
 
   useEffect(() => {
     if (!selectedToken || !TOKEN_DATA[selectedToken]) return;
     const token = TOKEN_DATA[selectedToken];
     let cancelled = false;
+    setChartLoading(true);
     void (async () => {
       const data = await fetchChartOHLCV(token, chartPeriod);
       if (cancelled) return;
       setChartData(data);
-      setChartPercentage(percentFromSeries(data));
+      setChartPercentage(data.length >= 2 ? percentFromSeries(data) : fallbackPercentage(tokenStats[selectedToken], chartPeriod));
+      setChartLoading(false);
 
       if (!chartOpen || !chartContainerRef.current) return;
       if (chartRef.current) { chartRef.current.remove(); chartRef.current = null; seriesRef.current = null; }
@@ -475,6 +503,11 @@ function App() {
       if (chartRef.current) { chartRef.current.remove(); chartRef.current = null; seriesRef.current = null; }
     };
   }, [selectedToken, chartPeriod, chartOpen]);
+
+  useEffect(() => {
+    if (!selectedToken || chartData.length >= 2) return;
+    setChartPercentage(fallbackPercentage(tokenStats[selectedToken], chartPeriod));
+  }, [tokenStats, selectedToken, chartPeriod, chartData.length]);
 
   const refreshWallet = async (wallet: TrackedWallet) => {
     setPortfolios(current => ({ ...current, [wallet.id]: { assets: current[wallet.id]?.assets ?? [], loading: true, error: '', refreshedAt: current[wallet.id]?.refreshedAt ?? null } }));
@@ -570,7 +603,7 @@ function App() {
                     <div className="token-subtitle-row">
                       <p>{TOKEN_DATA[selectedToken].subtitle}</p>
                       <span className={`token-price-change ${chartPercentage >= 0 ? 'positive' : 'negative'}`}>
-                        {`${chartPercentage >= 0 ? '+' : ''}${chartPercentage.toFixed(2)}%`}
+                        {chartLoading ? 'Loading' : `${chartPercentage >= 0 ? '+' : ''}${chartPercentage.toFixed(2)}%`} <small>{chartPeriod}</small>
                       </span>
                     </div>
                   </div>
@@ -581,7 +614,7 @@ function App() {
               </div>
               <div className="chart-period-selector">
                 {['24H', '7D', '30D', '3M', '6M', '1Y', 'ATL', 'All'].map(p => (
-                  <button key={p} className={`chart-period-btn ${chartPeriod === p ? 'active' : ''}`} onClick={() => setChartPeriod(p)}>{p}</button>
+                  <button key={p} className={`chart-period-btn ${chartPeriod === p ? 'active' : ''}`} onClick={() => { setChartPercentage(fallbackPercentage(tokenStats[selectedToken], p)); setChartPeriod(p); }}>{p}</button>
                 ))}
               </div>
               <div className="token-stats-row">
@@ -617,7 +650,7 @@ function App() {
             <label className="field-label">Wallet name <span>optional</span><input value={label} onChange={e => setLabel(e.target.value)} placeholder="Give this wallet a private label" autoComplete="off"/></label>
             <label className="field-label">Public wallet address<div className={`address-input ${error ? 'invalid' : ''}`}><input aria-label="Public wallet address" value={address} onChange={e => {setAddress(e.target.value.trim()); setError('')}} placeholder="Paste the complete public address" autoCapitalize="off" autoCorrect="off" spellCheck={false}/></div>{error && <small className="error">{error}</small>}</label>
             <label className="field-label">Add to wallet<div className="wallet-selector">{walletGroups.map(group => { const groupWallets = wallets.filter(w => (w.groupId ?? DEFAULT_GROUP_ID) === group.id); return <button type="button" key={group.id} className={`wallet-selector-item ${selectedGroupId === group.id ? 'selected' : ''}`} onClick={() => setSelectedGroupId(group.id)}><span className="wallet-selector-name">{group.name}</span><span className="wallet-selector-count">{groupWallets.length} {groupWallets.length === 1 ? 'wallet' : 'wallets'}</span></button>; })}</div></label>
-            <fieldset><legend>Choose network</legend><div className="network-choice"><button type="button" className={network === 'PulseChain' ? 'active' : ''} onClick={() => setNetwork('PulseChain')}><i className="pulse-dot"/><span><b>PulseChain</b><small>PLS · Chain 369</small></span></button><button type="button" className={network === 'Ethereum' ? 'active' : ''} onClick={() => setNetwork('Ethereum')}><i className="eth-diamond">◆</i><span><b>Ethereum</b><small>ETH · Chain 1</small></span></button></div></fieldset>
+            <fieldset><legend>Choose network</legend><div className="network-choice"><button type="button" className={network === 'PulseChain' ? 'active' : ''} onClick={() => setNetwork('PulseChain')}><i className="pulse-dot"/><span><b>PulseChain</b><small>PLS · Chain 369</small></span></button><button type="button" className={network === 'Ethereum' ? 'active' : ''} onClick={() => setNetwork('Ethereum')}><i className="eth-diamond">◆</i><span><b>Ethereum</b><small>ETH · Chain 1</small></span></button><button type="button" className={network === 'Both' ? 'active' : ''} onClick={() => setNetwork('Both')}><i className="both-network-icon"><span className="pulse-dot"/><span className="eth-diamond">◆</span></i><span><b>Both networks</b><small>PLS + ETH combined</small></span></button></div></fieldset>
             <button className="scan-button" type="submit">Track this wallet <ArrowRight size={18}/></button>
             <div className="privacy-line"><LockKeyhole size={13}/>Stored locally in your browser only</div>
           </div>}
@@ -657,7 +690,7 @@ function App() {
           {!trackedCollapsed && selectedWallet && !collapsedGroups.includes(selectedWallet.groupId ?? DEFAULT_GROUP_ID) && <div className="asset-panel">
             <div className="asset-panel-head"><div><p className="eyebrow">SELECTED ADDRESS</p><input className="address-name-input" aria-label="Rename selected wallet" value={selectedWallet.label} onChange={event => renameWallet(selectedWallet.id, event.target.value)}/><button onClick={() => copy(selectedWallet.address, selectedWallet.id)}>{privateMode ? '••••••••••••••••' : short(selectedWallet.address)} {copied === selectedWallet.id ? <em>COPIED</em> : <Copy size={13}/>}</button></div><div className="selected-actions"><button className={hideDust ? 'dust-active' : ''} onClick={() => setHideDust(value => !value)}>{hideDust ? `Show dust${hiddenDustCount ? ` · ${hiddenDustCount} hidden` : ''}` : 'Hide dust'}</button><a href={`${selectedWallet.network === 'PulseChain' ? 'https://scan.pulsechain.com/address/' : 'https://etherscan.io/address/'}${selectedWallet.address}`} target="_blank" rel="noreferrer">Explorer <ArrowUpRight size={15}/></a><button onClick={() => setWallets(wallets.filter(wallet => wallet.id !== selectedWallet.id))} aria-label={`Remove ${selectedWallet.label}`}><Trash2 size={16}/></button></div></div>
             <div className="asset-list">
-              {selectedPortfolio?.loading && selectedPortfolio.assets.length === 0 && <div className="asset-message"><RefreshCw size={20} className="spin-icon"/>Reading live {selectedWallet.network} assets…</div>}
+              {selectedPortfolio?.loading && selectedPortfolio.assets.length === 0 && <div className="asset-message"><RefreshCw size={20} className="spin-icon"/>Reading live {networkLabel(selectedWallet.network)} assets…</div>}
               {selectedPortfolio?.error && <div className="asset-message error-message">{selectedPortfolio.error}<button onClick={() => refreshWallet(selectedWallet)}>Try again</button></div>}
               {!selectedPortfolio?.loading && !selectedPortfolio?.error && selectedPortfolio?.assets.length === 0 && <div className="asset-message">No indexed assets were found for this address.</div>}
               {visibleAssets.map(asset => <article className="asset-row" key={asset.id}>
@@ -667,7 +700,7 @@ function App() {
               </article>)}
               {filteredAssets.length > 30 && <button className="show-assets" onClick={() => setShowAllAssets(value => !value)}>{showAllAssets ? 'Show top assets' : `View all ${filteredAssets.length} visible assets`}</button>}
             </div>
-            <div className="live-data-note"><Radio size={11}/>Live read-only data from {selectedWallet.network} · {selectedPortfolio?.refreshedAt ? `updated ${new Date(selectedPortfolio.refreshedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'waiting to sync'}</div>
+            <div className="live-data-note"><Radio size={11}/>Live read-only data from {networkLabel(selectedWallet.network)} · {selectedPortfolio?.refreshedAt ? `updated ${new Date(selectedPortfolio.refreshedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'waiting to sync'}</div>
           </div>}
         </div>}
       </section><div className={`new-wallet-panel ${newWalletPanelOpen ? 'open' : ''}`}><div className="new-wallet-glow"/><button className="new-wallet-fold" onClick={() => setNewWalletPanelOpen(value => !value)} aria-expanded={newWalletPanelOpen}><span className="new-wallet-title"><i className="wallet-orbit"><FolderPlus size={20}/></i><span><small>ORGANIZE YOUR WATCHLIST</small><b>Create another wallet</b></span></span><ChevronDown size={17}/></button>{newWalletPanelOpen && <div className="new-wallet-body"><p className="panel-note">Create a separate wallet for personal addresses, whales, or any watchlist you choose.</p><div className="group-creator"><FolderPlus size={15}/><input aria-label="New wallet group name" value={newGroupName} onChange={event => setNewGroupName(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addGroup(); } }} placeholder="Name a new wallet, e.g. Whales"/><button onClick={addGroup} disabled={!newGroupName.trim()}>Create wallet</button></div></div>}</div></>}
