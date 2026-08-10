@@ -1,13 +1,13 @@
 import React, { FormEvent, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowLeft, ArrowRight, ArrowUpRight, ChartPie, ChevronDown, Copy, Eye, EyeOff, FolderPlus, Languages, LockKeyhole, Network as NetworkIcon, Radio, RefreshCw, ScanSearch, Settings, ShieldCheck, SlidersHorizontal, Trash2, WalletCards, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ArrowUpRight, Calculator, ChartPie, ChevronDown, Copy, Eye, EyeOff, FolderPlus, Languages, LockKeyhole, Network as NetworkIcon, Radio, RefreshCw, ScanSearch, Settings, ShieldCheck, SlidersHorizontal, Trash2, Volume2, VolumeX, WalletCards, X } from 'lucide-react';
 import { createChart, IChartApi, ISeriesApi, LineStyle, LineSeries } from 'lightweight-charts';
 import './styles.css';
 
 type ChainNetwork = 'PulseChain' | 'Ethereum';
 type Network = ChainNetwork | 'Both';
 type Language = 'en' | 'fr' | 'es' | 'nl';
-type SettingsSection = 'language' | 'network' | 'customize' | null;
+type SettingsSection = 'language' | 'network' | 'customize' | 'sound' | null;
 type TrackedWallet = { id: string; label: string; address: string; network: Network; groupId?: string };
 type WalletGroup = { id: string; name: string };
 type Asset = { id: string; symbol: string; name: string; amount: string; price: number | null; value: number | null; icon: string | null; network: ChainNetwork; native?: boolean; decimals?: number };
@@ -15,6 +15,7 @@ type Portfolio = { assets: Asset[]; loading: boolean; error: string; refreshedAt
 type HexStake = { id: string; walletId: string; walletLabel: string; walletAddress: string; network: ChainNetwork; stakeId: string; stakedHex: number; lockedDay: number; stakedDays: number; endDay: number; unlockedDay: number; currentDay: number; price: number | null };
 type HexEndedStake = { id: string; walletId: string; walletLabel: string; walletAddress: string; network: ChainNetwork; stakeId: string; endedAt: number; stakedHex: number; returnedHex: number; price: number | null };
 type HexStakeState = { stakes: HexStake[]; endedStakes: HexEndedStake[]; loading: boolean; error: string; refreshedAt: number | null; network: Network };
+type HexCalculatorMetrics = { network: ChainNetwork; shareRate: number; oneTShareHex: number; dailyHexPerTShare: number; price: number | null; sampleDays: number; loading: boolean; error: string };
 type TokenStats = {
   price: number;
   change24h: number;
@@ -32,6 +33,7 @@ const GROUP_STORAGE_KEY = 'pulse-vault-wallet-groups-v1';
 const NETWORK_STORAGE_KEY = 'pulse-vault-active-network-v1';
 const LANGUAGE_STORAGE_KEY = 'pulse-vault-language-v1';
 const SETTINGS_TRANSPARENCY_STORAGE_KEY = 'pulse-vault-settings-transparency-v1';
+const SOUND_STORAGE_KEY = 'pulse-vault-panel-sound-v1';
 const DEFAULT_GROUP_ID = 'my-wallet';
 const ALLOCATION_COLORS: Record<string, string> = { ETH: '#7868f2', WETH: '#627eea', PLS: '#35d8f2', WPLS: '#35d8f2', HEX: '#ff2ca8', PHEX: '#ff9d00', PLSX: '#00ed94', PRVX: '#a84cff', INC: '#00e6a8', HDRN: '#18c8ff', ICSA: '#f5b942', PDI: '#df48ff', PDA: '#ff8c42', ASIC: '#ffcf40', USDC: '#2775ca' };
 const ALLOCATION_FALLBACK_COLORS = ['#ff2ca8', '#8c38ff', '#14d9ff', '#00e6a8', '#ff9d00', '#f85f73'];
@@ -57,6 +59,8 @@ const VERIFIED_TOKEN_CONTRACTS: Partial<Record<ChainNetwork, Record<string, stri
   Ethereum: {
     HEX: '0x2B591e99afE9f32eAA6214f7B7629768c40Eeb39',
     WETH: WRAPPED_NATIVE.Ethereum,
+    HDRN: '0x3819f64f282bf135d62168C1e513280dAF905e06',
+    ICSA: '0xfc4913214444af5c715cc9f7b52655e788a569ed',
   },
   PulseChain: {
     HEX: '0x2B591e99afE9f32eAA6214f7B7629768c40Eeb39',
@@ -64,6 +68,8 @@ const VERIFIED_TOKEN_CONTRACTS: Partial<Record<ChainNetwork, Record<string, stri
     PLSX: '0x95B303987A60C71504D99Aa1b13B4DA07b0790ab',
     PRVX: '0xF6f8Db0aBa00007681F8fAF16A0FDa1c9B030b11',
     INC: '0x2fa878Ab3F87CC1C9737Fc071108F904c0B0C95d',
+    HDRN: '0x3819f64f282bf135d62168C1e513280dAF905e06',
+    ICSA: '0xfc4913214444af5c715cc9f7b52655e788a569ed',
   },
 };
 const RPC_URLS: Record<ChainNetwork, string[]> = {
@@ -74,6 +80,7 @@ const GECKO_NETWORK: Record<ChainNetwork, string> = { PulseChain: 'pulsechain', 
 const ETH_USD_FEED = '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419';
 const HEX_LAUNCH_MS = Date.UTC(2019, 11, 3);
 const HEX_STAKE_SELECTORS = { currentDay: '0x5c9302c9', stakeCount: '0x33060d90', stakeLists: '0x2607443b' } as const;
+const HEX_CALCULATOR_SELECTORS = { globals: '0xc3124525', dailyDataRange: '0x6a210a0e' } as const;
 const HEX_STAKE_END_TOPIC = '0x72d9c5a7ab13846e08d9c838f9e866a1bb4a66a2fd3ba3c9e7da3cf9e394dfd7';
 const chartRequestCache = new Map<string, Promise<{ time: number; value: number }[]>>();
 let geckoRequestQueue: Promise<unknown> = Promise.resolve();
@@ -204,8 +211,38 @@ function readLanguage(): Language {
 function readSettingsTransparency() {
   try {
     const saved = Number(localStorage.getItem(SETTINGS_TRANSPARENCY_STORAGE_KEY));
-    return Number.isFinite(saved) && saved >= 35 && saved <= 98 ? saved : 78;
-  } catch { return 78; }
+    if (saved === 78) return 77;
+    return Number.isFinite(saved) && saved >= 35 && saved <= 98 ? saved : 77;
+  } catch { return 77; }
+}
+
+function readSoundEnabled() {
+  try { return localStorage.getItem(SOUND_STORAGE_KEY) === 'true'; }
+  catch { return false; }
+}
+
+function playPanelChime() {
+  try {
+    const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextClass) return;
+    const context = new AudioContextClass();
+    const gain = context.createGain();
+    const first = context.createOscillator();
+    const second = context.createOscillator();
+    const now = context.currentTime;
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.055, now + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+    first.type = 'sine';
+    first.frequency.setValueAtTime(620, now);
+    first.frequency.exponentialRampToValueAtTime(760, now + 0.09);
+    second.type = 'sine';
+    second.frequency.setValueAtTime(930, now + 0.055);
+    first.connect(gain); second.connect(gain); gain.connect(context.destination);
+    first.start(now); second.start(now + 0.055);
+    first.stop(now + 0.18); second.stop(now + 0.2);
+    second.addEventListener('ended', () => void context.close(), { once: true });
+  } catch { /* Sound feedback is optional when a browser blocks audio. */ }
 }
 
 function defaultSelectedWalletId() {
@@ -465,8 +502,17 @@ async function enrichMarketAssets(assets: Asset[], network: ChainNetwork) {
   }
   if (network === 'Ethereum') {
     const oraclePrice = await ethereumOraclePrice();
-    const native = unique.find(asset => asset.native);
-    if (native && oraclePrice) enriched.set(native.id, { price: oraclePrice, icon: enriched.get(native.id)?.icon ?? null });
+    if (oraclePrice) {
+      unique.filter(asset => asset.native || assetContract(asset) === WRAPPED_NATIVE.Ethereum.toLowerCase()).forEach(asset => {
+        enriched.set(asset.id, { price: oraclePrice, icon: enriched.get(asset.id)?.icon ?? null });
+      });
+    }
+  }
+  const wrappedContract = WRAPPED_NATIVE[network].toLowerCase();
+  const nativeAndWrapped = unique.filter(asset => asset.native || assetContract(asset) === wrappedContract);
+  const sharedNativePrice = nativeAndWrapped.map(asset => enriched.get(asset.id)?.price).find(price => typeof price === 'number' && price > 0);
+  if (sharedNativePrice) {
+    nativeAndWrapped.forEach(asset => enriched.set(asset.id, { price: sharedNativePrice, icon: enriched.get(asset.id)?.icon ?? null }));
   }
   return assets.map(asset => {
     const market = enriched.get(asset.id);
@@ -764,6 +810,64 @@ function fallbackPercentage(stats: TokenStats | undefined, period: string): numb
   return null;
 }
 
+async function readHexCalculatorMetrics(network: ChainNetwork): Promise<Omit<HexCalculatorMetrics, 'loading' | 'error'>> {
+  const contract = VERIFIED_TOKEN_CONTRACTS[network]?.HEX;
+  if (!contract) throw new Error(`${network} HEX contract is unavailable`);
+  const priceToken = TOKEN_DATA[network === 'Ethereum' ? 'HEX' : 'pHEX'];
+  const [dayHex, globalsHex, priceResult] = await Promise.all([
+    rpcRequest<string>(network, 'eth_call', [{ to: contract, data: HEX_STAKE_SELECTORS.currentDay }, 'latest']),
+    rpcRequest<string>(network, 'eth_call', [{ to: contract, data: HEX_CALCULATOR_SELECTORS.globals }, 'latest']),
+    fetchTokenStats(priceToken).catch(() => null),
+  ]);
+  const currentDay = Number(BigInt(dayHex));
+  const globals = decodeAbiWords(globalsHex);
+  if (globals.length < 3) throw new Error('HEX share rate was not returned by the contract');
+  const shareRate = Number(BigInt(`0x${globals[2]}`));
+  if (!(shareRate > 0)) throw new Error('HEX share rate is unavailable');
+  const beginDay = Math.max(0, currentDay - 30);
+  const rangeData = `${HEX_CALCULATOR_SELECTORS.dailyDataRange}${abiWord(beginDay)}${abiWord(currentDay)}`;
+  const rangeHex = await rpcRequest<string>(network, 'eth_call', [{ to: contract, data: rangeData }, 'latest']);
+  const rangeWords = decodeAbiWords(rangeHex);
+  const length = rangeWords.length > 1 ? Math.min(Number(BigInt(`0x${rangeWords[1]}`)), rangeWords.length - 2) : 0;
+  const mask72 = (1n << 72n) - 1n;
+  const dailyRates = rangeWords.slice(2, 2 + length).flatMap(word => {
+    const packed = BigInt(`0x${word}`);
+    const payoutHearts = packed & mask72;
+    const stakeShares = (packed >> 72n) & mask72;
+    if (payoutHearts === 0n || stakeShares === 0n) return [];
+    return [Number(payoutHearts) * 1e4 / Number(stakeShares)];
+  }).filter(rate => Number.isFinite(rate) && rate > 0);
+  if (!dailyRates.length) throw new Error('Recent HEX payout data is unavailable');
+  return {
+    network,
+    shareRate,
+    oneTShareHex: shareRate / 10,
+    dailyHexPerTShare: dailyRates.reduce((total, rate) => total + rate, 0) / dailyRates.length,
+    price: priceResult && priceResult.price > 0 ? priceResult.price : null,
+    sampleDays: dailyRates.length,
+  };
+}
+
+function calculateHexStake(amountHex: number, days: number, metrics: HexCalculatorMetrics) {
+  if (!(amountHex > 0) || !(days > 0) || !(metrics.shareRate > 0)) return null;
+  const hearts = BigInt(Math.round(amountHex * 1e8));
+  const cappedExtraDays = BigInt(Math.min(Math.max(days - 1, 0), 3640));
+  const maxHearts = 150_000_000n * 100_000_000n;
+  const cappedHearts = hearts < maxHearts ? hearts : maxHearts;
+  const lpb = 1820n;
+  const bpb = maxHearts * 10n;
+  const bonusHearts = hearts * (cappedExtraDays * bpb + cappedHearts * lpb) / (lpb * bpb);
+  const stakeShares = (hearts + bonusHearts) * 100_000n / BigInt(Math.round(metrics.shareRate));
+  const tShares = Number(stakeShares) / 1e12;
+  const estimatedYield = tShares * metrics.dailyHexPerTShare * days;
+  return {
+    tShares,
+    bonusPercent: Number(bonusHearts) / Number(hearts) * 100,
+    estimatedYield,
+    estimatedReturn: amountHex + estimatedYield,
+  };
+}
+
 function HexStakesPanel({ state, open, filter, network, walletCount, privateMode, onToggle, onFilter, onNetwork, onRefresh }: { state: HexStakeState; open: boolean; filter: 'all' | 'active' | 'matured'; network: Network; walletCount: number; privateMode: boolean; onToggle: () => void; onFilter: (filter: 'all' | 'active' | 'matured') => void; onNetwork: (network: Network) => void; onRefresh: () => void }) {
   const isMatured = (stake: HexStake) => stake.currentDay >= stake.endDay;
   const activeCount = state.stakes.filter(stake => !isMatured(stake)).length;
@@ -816,6 +920,42 @@ function HexStakesPanel({ state, open, filter, network, walletCount, privateMode
   </section>;
 }
 
+function HexCalculatorPanel({ open, network, metrics, onToggle, onNetwork, onRefresh }: { open: boolean; network: ChainNetwork; metrics: HexCalculatorMetrics; onToggle: () => void; onNetwork: (network: ChainNetwork) => void; onRefresh: () => void }) {
+  const [amount, setAmount] = useState('30000');
+  const [duration, setDuration] = useState('2');
+  const [unit, setUnit] = useState<'days' | 'months' | 'years'>('months');
+  const amountHex = Math.max(0, Number(amount.replace(/,/g, '')) || 0);
+  const durationValue = Math.max(0, Number(duration) || 0);
+  const rawDays = unit === 'years' ? durationValue * 365 : unit === 'months' ? durationValue * 30.4375 : durationValue;
+  const days = Math.max(1, Math.min(5555, Math.round(rawDays)));
+  const result = calculateHexStake(amountHex, days, metrics);
+  const endDate = new Date(Date.now() + days * 86_400_000).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  const setPreset = (nextDuration: string, nextUnit: 'months' | 'years') => { setDuration(nextDuration); setUnit(nextUnit); };
+  return <section className={`hex-calculator-panel ${open ? 'open' : ''}`}>
+    <button className="hex-calculator-fold" type="button" onClick={onToggle} aria-expanded={open}>
+      <span className="hex-calculator-title"><i><Calculator size={22}/></i><span><small>ON-CHAIN STAKE ESTIMATE</small><b>HEX Calculator</b></span></span><ChevronDown size={17}/>
+    </button>
+    {open && <div className="hex-calculator-body">
+      <div className="hex-calculator-network" role="group" aria-label="HEX calculator network">{(['Ethereum', 'PulseChain'] as ChainNetwork[]).map(option => <button type="button" key={option} className={network === option ? 'active' : ''} aria-pressed={network === option} onClick={() => onNetwork(option)}>{option}</button>)}</div>
+      <div className="hex-calculator-fields">
+        <label><span>HEX to stake</span><input inputMode="decimal" value={amount} onChange={event => setAmount(event.target.value.replace(/[^0-9.,]/g, ''))} aria-label="HEX amount to stake"/></label>
+        <label><span>Stake length</span><div><input inputMode="decimal" value={duration} onChange={event => setDuration(event.target.value.replace(/[^0-9.]/g, ''))} aria-label="Stake duration"/><select value={unit} onChange={event => setUnit(event.target.value as 'days' | 'months' | 'years')} aria-label="Stake duration unit"><option value="days">Days</option><option value="months">Months</option><option value="years">Years</option></select></div></label>
+      </div>
+      <div className="hex-calculator-presets"><button type="button" onClick={() => setPreset('2', 'months')}>2 months</button><button type="button" onClick={() => setPreset('1', 'years')}>1 year</button><button type="button" onClick={() => setPreset('5', 'years')}>5 years</button><button type="button" onClick={() => setPreset('10', 'years')}>10 years</button><button type="button" onClick={() => setPreset('15', 'years')}>15 years</button></div>
+      {metrics.loading ? <div className="hex-calculator-status"><RefreshCw size={18} className="spin-icon"/>Reading live HEX share rate and payouts…</div> : metrics.error ? <div className="hex-calculator-status error-message">{metrics.error}<button type="button" onClick={onRefresh}>Try again</button></div> : result ? <>
+        <div className="hex-calculator-share"><span><small>HEX FOR 1 BASE T-SHARE</small><strong>{compactAmount(String(metrics.oneTShareHex), 2)} HEX</strong></span><span><small>LIVE SHARE RATE</small><strong>{metrics.shareRate.toLocaleString()}</strong></span></div>
+        <div className="hex-calculator-results">
+          <div><small>ESTIMATED T-SHARES</small><strong>{result.tShares.toLocaleString(undefined, { maximumFractionDigits: 4 })}</strong><em>{result.bonusPercent.toFixed(2)}% stake bonus</em></div>
+          <div><small>ESTIMATED YIELD</small><strong>{compactAmount(String(result.estimatedYield), 2)} HEX</strong><em>{metrics.price ? money(result.estimatedYield * metrics.price) : 'Live HEX value unavailable'}</em></div>
+          <div><small>ESTIMATED RETURN</small><strong>{compactAmount(String(result.estimatedReturn), 2)} HEX</strong><em>Principal + estimated yield</em></div>
+          <div><small>ESTIMATED END DATE</small><strong>{endDate}</strong><em>{days.toLocaleString()} days · max 5,555</em></div>
+        </div>
+        <p className="hex-calculator-note"><ShieldCheck size={13}/>Share count uses the verified {network} HEX contract formula and current share rate. Yield uses the average payout from the last {metrics.sampleDays} completed on-chain days. Future daily payouts, global T-shares and HEX price can change, so this is an estimate—not a guaranteed return.</p>
+      </> : <div className="hex-calculator-status">Enter a HEX amount to calculate a stake.</div>}
+    </div>}
+  </section>;
+}
+
 function App() {
   const [wallets, setWallets] = useState<TrackedWallet[]>(readWallets);
   const [walletGroups, setWalletGroups] = useState<WalletGroup[]>(readGroups);
@@ -831,9 +971,14 @@ function App() {
   const [hexStakeFilter, setHexStakeFilter] = useState<'all' | 'active' | 'matured'>('all');
   const [hexStakeRefresh, setHexStakeRefresh] = useState(0);
   const [hexStakeState, setHexStakeState] = useState<HexStakeState>({ stakes: [], endedStakes: [], loading: false, error: '', refreshedAt: null, network: readNetwork() });
+  const [hexCalculatorOpen, setHexCalculatorOpen] = useState(true);
+  const [hexCalculatorNetwork, setHexCalculatorNetwork] = useState<ChainNetwork>(() => readNetwork() === 'Ethereum' ? 'Ethereum' : 'PulseChain');
+  const [hexCalculatorRefresh, setHexCalculatorRefresh] = useState(0);
+  const [hexCalculatorMetrics, setHexCalculatorMetrics] = useState<HexCalculatorMetrics>({ network: readNetwork() === 'Ethereum' ? 'Ethereum' : 'PulseChain', shareRate: 0, oneTShareHex: 0, dailyHexPerTShare: 0, price: null, sampleDays: 0, loading: true, error: '' });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>(null);
   const [settingsTransparency, setSettingsTransparency] = useState(readSettingsTransparency);
+  const [soundEnabled, setSoundEnabled] = useState(readSoundEnabled);
   const [language, setLanguage] = useState<Language>(readLanguage);
   const [addressFormOpen, setAddressFormOpen] = useState(false);
   const [label, setLabel] = useState('');
@@ -866,9 +1011,32 @@ function App() {
   useEffect(() => localStorage.setItem(NETWORK_STORAGE_KEY, network), [network]);
   useEffect(() => { localStorage.setItem(LANGUAGE_STORAGE_KEY, language); document.documentElement.lang = language; }, [language]);
   useEffect(() => localStorage.setItem(SETTINGS_TRANSPARENCY_STORAGE_KEY, String(settingsTransparency)), [settingsTransparency]);
+  useEffect(() => localStorage.setItem(SOUND_STORAGE_KEY, String(soundEnabled)), [soundEnabled]);
   useEffect(() => { if (!wallets.some(wallet => wallet.id === selectedId)) setSelectedId(wallets[0]?.id ?? ''); }, [wallets, selectedId]);
   useEffect(() => setShowAllAssets(false), [selectedId]);
   useEffect(() => { setChartOpen(false); setChartPeriod('24H'); setChartData([]); setChartPercentage(0); setChartLoading(false); }, [selectedToken]);
+
+  useEffect(() => {
+    if (!soundEnabled) return;
+    const soundTargets = '.panel-fold,.group-fold,.new-wallet-fold,.allocation-fold,.hex-stakes-fold,.hex-calculator-fold';
+    const handlePanelClick = (event: MouseEvent) => {
+      if ((event.target as HTMLElement).closest(soundTargets)) playPanelChime();
+    };
+    document.addEventListener('click', handlePanelClick);
+    return () => document.removeEventListener('click', handlePanelClick);
+  }, [soundEnabled]);
+
+  useEffect(() => {
+    if (!hexCalculatorOpen) return;
+    let cancelled = false;
+    setHexCalculatorMetrics(current => ({ ...current, network: hexCalculatorNetwork, loading: true, error: '' }));
+    void readHexCalculatorMetrics(hexCalculatorNetwork).then(metrics => {
+      if (!cancelled) setHexCalculatorMetrics({ ...metrics, loading: false, error: '' });
+    }).catch(() => {
+      if (!cancelled) setHexCalculatorMetrics(current => ({ ...current, network: hexCalculatorNetwork, loading: false, error: 'Live HEX calculator data is temporarily unavailable.' }));
+    });
+    return () => { cancelled = true; };
+  }, [hexCalculatorNetwork, hexCalculatorOpen, hexCalculatorRefresh]);
 
   useEffect(() => {
     if (!hexStakesOpen) return;
@@ -1244,21 +1412,25 @@ function App() {
 
       {wallets.length > 0 && <HexStakesPanel state={hexStakeState} open={hexStakesOpen} filter={hexStakeFilter} network={hexStakeNetwork} walletCount={wallets.length} privateMode={privateMode} onToggle={() => setHexStakesOpen(value => !value)} onFilter={setHexStakeFilter} onNetwork={setHexStakeNetwork} onRefresh={() => setHexStakeRefresh(value => value + 1)}/>}
 
+      <HexCalculatorPanel open={hexCalculatorOpen} network={hexCalculatorNetwork} metrics={hexCalculatorMetrics} onToggle={() => setHexCalculatorOpen(value => !value)} onNetwork={setHexCalculatorNetwork} onRefresh={() => setHexCalculatorRefresh(value => value + 1)}/>
+
       {wallets.length === 0 && <section className="next-preview"><p className="eyebrow">WHAT COMES NEXT</p><h2>Your wallet becomes a living dashboard.</h2><div className="preview-panels"><div/><div/><div/></div><p>Token panels inspired by your reference design will appear here after we connect live portfolio data.</p></section>}
     </main>
     {settingsOpen && <section className="settings-panel" style={{ '--settings-opacity': settingsTransparency / 100 } as React.CSSProperties} aria-label={ui.settings}>
       <div className="settings-head">
-        <div className="settings-head-title">{settingsSection && <button className="settings-back" type="button" onClick={() => setSettingsSection(null)} aria-label="Back to settings"><ArrowLeft size={17}/></button>}<div><p className="eyebrow">{ui.settings.toUpperCase()}</p><h2>{settingsSection === 'language' ? ui.language : settingsSection === 'network' ? 'Network' : settingsSection === 'customize' ? 'Customize' : ui.settings}</h2></div></div>
+        <div className="settings-head-title">{settingsSection && <button className="settings-back" type="button" onClick={() => setSettingsSection(null)} aria-label="Back to settings"><ArrowLeft size={17}/></button>}<div><p className="eyebrow">{ui.settings.toUpperCase()}</p><h2>{settingsSection === 'language' ? ui.language : settingsSection === 'network' ? 'Network' : settingsSection === 'customize' ? 'Customize' : settingsSection === 'sound' ? 'Sound' : ui.settings}</h2></div></div>
         <button type="button" onClick={() => { setSettingsOpen(false); setSettingsSection(null); }} aria-label="Close settings"><X size={18}/></button>
       </div>
       {!settingsSection && <div className="settings-menu">
         <button type="button" onClick={() => setSettingsSection('language')}><i><Languages size={20}/></i><span><b>{ui.language}</b><small>{LANGUAGE_OPTIONS.find(option => option.id === language)?.native}</small></span><ChevronDown size={17}/></button>
         <button type="button" onClick={() => setSettingsSection('network')}><i><NetworkIcon size={20}/></i><span><b>Network</b><small>{networkLabel(network)}</small></span><ChevronDown size={17}/></button>
         <button type="button" onClick={() => setSettingsSection('customize')}><i><SlidersHorizontal size={20}/></i><span><b>Customize</b><small>Panel transparency · {settingsTransparency}%</small></span><ChevronDown size={17}/></button>
+        <button type="button" onClick={() => setSettingsSection('sound')}><i>{soundEnabled ? <Volume2 size={20}/> : <VolumeX size={20}/>}</i><span><b>Sound</b><small>Panel sounds · {soundEnabled ? 'On' : 'Off'}</small></span><ChevronDown size={17}/></button>
       </div>}
       {settingsSection === 'language' && <div className="language-options" role="group" aria-label={ui.language}>{LANGUAGE_OPTIONS.map(option => <button type="button" key={option.id} className={language === option.id ? 'active' : ''} aria-pressed={language === option.id} onClick={() => setLanguage(option.id)}><span>{option.native}</span><small>{option.label}</small></button>)}</div>}
       {settingsSection === 'network' && <div className="settings-network-options" role="group" aria-label="Network">{(['Ethereum', 'PulseChain', 'Both'] as Network[]).map(option => <button type="button" key={option} className={network === option ? 'active' : ''} aria-pressed={network === option} onClick={() => chooseNetwork(option)}><i className={option === 'Ethereum' ? 'eth-diamond' : option === 'PulseChain' ? 'pulse-dot' : 'both-network-icon'}>{option === 'Ethereum' ? '◆' : option === 'Both' ? <><span className="pulse-dot"/><span className="eth-diamond">◆</span></> : null}</i><span><b>{option === 'Both' ? 'Both networks' : option}</b><small>{option === 'Ethereum' ? 'ETH · Chain 1' : option === 'PulseChain' ? 'PLS · Chain 369' : 'PulseChain + Ethereum'}</small></span></button>)}</div>}
-      {settingsSection === 'customize' && <div className="settings-customize"><div className="transparency-label"><span><b>Panel transparency</b><small>See your portfolio behind Settings</small></span><strong>{settingsTransparency}%</strong></div><input type="range" min="35" max="98" step="1" value={settingsTransparency} onChange={event => setSettingsTransparency(Number(event.target.value))} aria-label="Settings panel transparency"/><div className="transparency-scale"><span>More transparent</span><span>More solid</span></div><div className="transparency-presets">{[{ label: 'Glass', value: 45 }, { label: 'Balanced', value: 78 }, { label: 'Solid', value: 94 }].map(option => <button type="button" key={option.label} className={settingsTransparency === option.value ? 'active' : ''} onClick={() => setSettingsTransparency(option.value)}><span>{option.label}</span><small>{option.value}%</small></button>)}</div></div>}
+      {settingsSection === 'customize' && <div className="settings-customize"><div className="transparency-label"><span><b>Panel transparency</b><small>See your portfolio behind Settings</small></span><strong>{settingsTransparency}%</strong></div><input type="range" min="35" max="98" step="1" value={settingsTransparency} onChange={event => setSettingsTransparency(Number(event.target.value))} aria-label="Settings panel transparency"/><div className="transparency-scale"><span>More transparent</span><span>More solid</span></div><div className="transparency-presets">{[{ label: 'Glass', value: 45 }, { label: 'Balanced', value: 77 }, { label: 'Solid', value: 94 }].map(option => <button type="button" key={option.label} className={settingsTransparency === option.value ? 'active' : ''} onClick={() => setSettingsTransparency(option.value)}><span>{option.label}</span><small>{option.value}%</small></button>)}</div></div>}
+      {settingsSection === 'sound' && <div className="settings-network-options sound-options" role="group" aria-label="Panel sound"><button type="button" className={soundEnabled ? 'active' : ''} aria-pressed={soundEnabled} onClick={() => { setSoundEnabled(true); playPanelChime(); }}><i><Volume2 size={20}/></i><span><b>Sound on</b><small>Play a soft chime when a panel opens or closes</small></span></button><button type="button" className={!soundEnabled ? 'active' : ''} aria-pressed={!soundEnabled} onClick={() => setSoundEnabled(false)}><i><VolumeX size={20}/></i><span><b>Sound off</b><small>Keep panel controls silent</small></span></button></div>}
     </section>}
     <footer><div className="footer-tools"><button className={`settings-button ${settingsOpen ? 'active' : ''}`} type="button" onClick={() => { setSettingsSection(null); setSettingsOpen(value => !value); }} aria-expanded={settingsOpen}><Settings size={15}/>{ui.settings}</button><button className="refresh-button" onClick={refreshApp} aria-label="Refresh PulseVault"><RefreshCw size={14}/>{ui.refresh}</button></div><span>{ui.footer}</span></footer>
   </div>;
