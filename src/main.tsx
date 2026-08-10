@@ -116,6 +116,7 @@ const HEX_STAKE_END_TOPIC = '0x72d9c5a7ab13846e08d9c838f9e866a1bb4a66a2fd3ba3c9e
 const chartRequestCache = new Map<string, Promise<{ time: number; value: number }[]>>();
 let pulseChainStatsSnapshotRequest: Promise<Record<string, any>> | null = null;
 let pulseStakedSupplyRequest: Promise<string | null> | null = null;
+const hexStakedSupplyRequests = new Map<ChainNetwork, Promise<string | null>>();
 let geckoRequestQueue: Promise<unknown> = Promise.resolve();
 let lastGeckoRequestAt = 0;
 const CORE_ICONS: Record<string, string> = {
@@ -664,6 +665,26 @@ async function fetchPulseStakedSupply() {
   return pulseStakedSupplyRequest;
 }
 
+function fetchHexStakedSupply(network: ChainNetwork) {
+  const cached = hexStakedSupplyRequests.get(network);
+  if (cached) return cached;
+  const request = (async () => {
+    try {
+      const contract = VERIFIED_TOKEN_CONTRACTS[network]?.HEX;
+      if (!contract) return null;
+      const globalsHex = await rpcRequest<string>(network, 'eth_call', [{ to: contract, data: HEX_CALCULATOR_SELECTORS.globals }, 'latest']);
+      const [lockedHeartsWord] = decodeAbiWords(globalsHex);
+      if (!lockedHeartsWord) return null;
+      const lockedHex = Number(BigInt(`0x${lockedHeartsWord}`)) / 1e8;
+      return lockedHex > 0 ? compactSupply(String(lockedHex)) : null;
+    } catch {
+      return null;
+    }
+  })();
+  hexStakedSupplyRequests.set(network, request);
+  return request;
+}
+
 function fetchPulseChainStatsSnapshot() {
   if (pulseChainStatsSnapshotRequest) return pulseChainStatsSnapshotRequest;
   pulseChainStatsSnapshotRequest = fetch('https://r.jina.ai/http://www.pulsechainstats.com/api/data/24H')
@@ -686,10 +707,11 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
   try {
     const baseExplorer = token.network === 'PulseChain' ? 'https://api.scan.pulsechain.com' : 'https://eth.blockscout.com';
     const chainId = token.network === 'PulseChain' ? 'pulsechain' : 'ethereum';
-    const [tokenData, dexData, pulseChainSnapshot] = await Promise.all([
+    const [tokenData, dexData, pulseChainSnapshot, staked] = await Promise.all([
       jsonRequest(`${baseExplorer}/api/v2/tokens/${token.contract}`, 10000).catch(() => null),
       jsonRequest(`https://api.dexscreener.com/latest/dex/tokens/${token.contract}`, 10000).catch(() => null),
       token.network === 'PulseChain' ? fetchPulseChainStatsSnapshot().catch((): Record<string, any> => ({})) : Promise.resolve<Record<string, any>>({}),
+      tokenKey(token.symbol) === 'HEX' || tokenKey(token.symbol) === 'PHEX' ? fetchHexStakedSupply(token.network as ChainNetwork) : Promise.resolve(null),
     ]);
 
     const targetAddress = token.contract.toLowerCase();
@@ -720,8 +742,8 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
       const decimals = tokenData.decimals ?? 18;
       supplyNumber = Number(formatUnits(String(tokenData.total_supply), decimals));
     }
-    if (tokenData?.holders) {
-      const holderCount = Number(tokenData.holders);
+    const holderCount = Number(tokenData?.holders_count ?? tokenData?.holders ?? 0);
+    if (holderCount > 0) {
       holders = holderCount >= 1000 ? compactAmount(String(holderCount), 1) : holderCount.toLocaleString();
     }
 
@@ -779,6 +801,7 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
       liquidity: resolvedLiquidity / 1_000_000,
       supply,
       holders,
+      staked: staked ?? undefined,
       loading: false,
       error: allPairs.length || price > 0 ? '' : 'Live market data is temporarily unavailable',
     };
@@ -803,6 +826,7 @@ async function fetchCombinedHexStats(): Promise<TokenStats> {
     : 0;
   const combinedSupply = parseCompactMetric(ethereumHex.supply) + parseCompactMetric(pulseHex.supply);
   const combinedHolders = parseCompactMetric(ethereumHex.holders) + parseCompactMetric(pulseHex.holders);
+  const combinedStaked = parseCompactMetric(ethereumHex.staked ?? '') + parseCompactMetric(pulseHex.staked ?? '');
   return {
     price: combinedPrice,
     change24h: weightedChange('change24h'),
@@ -812,6 +836,7 @@ async function fetchCombinedHexStats(): Promise<TokenStats> {
     liquidity: ethereumHex.liquidity + pulseHex.liquidity,
     supply: combinedSupply > 0 ? compactSupply(String(combinedSupply)) : 'N/A',
     holders: combinedHolders > 0 ? compactAmount(String(combinedHolders), 1) : 'N/A',
+    staked: combinedStaked > 0 ? compactSupply(String(combinedStaked)) : undefined,
     loading: false,
     error: ethereumHex.error && pulseHex.error ? 'Combined HEX data is temporarily unavailable' : '',
   };
@@ -1118,7 +1143,7 @@ function HexCalculatorPanel({ open, network, metrics, onToggle, onNetwork, onRef
         <label><span>Stake length</span><div><input inputMode="decimal" value={duration} onChange={event => setDuration(event.target.value.replace(/[^0-9.]/g, ''))} aria-label="Stake duration"/><select value={unit} onChange={event => setUnit(event.target.value as 'days' | 'months' | 'years')} aria-label="Stake duration unit"><option value="days">Days</option><option value="months">Months</option><option value="years">Years</option></select></div></label>
       </div>
       {metrics.loading ? <div className="hex-calculator-status"><RefreshCw size={18} className="spin-icon"/>Reading live HEX share rate and payouts…</div> : metrics.error ? <div className="hex-calculator-status error-message">{metrics.error}<button type="button" onClick={onRefresh}>Try again</button></div> : result ? <>
-        <div className="hex-calculator-share"><span><small>HEX FOR 1 BASE T-SHARE</small><strong>{compactAmount(String(metrics.oneTShareHex), 2)} HEX</strong></span><span><small>LIVE SHARE RATE</small><strong>{metrics.shareRate.toLocaleString()}</strong></span></div>
+        <div className="hex-calculator-share"><span><small>HEX FOR 1 BASE T-SHARE</small><strong>{compactAmount(String(metrics.oneTShareHex), 2)} HEX</strong></span><span><small>DAILY HEX / T-SHARE</small><strong>{metrics.dailyHexPerTShare.toLocaleString(undefined, { maximumFractionDigits: 3 })} HEX</strong></span><span><small>LIVE SHARE RATE</small><strong>{metrics.shareRate.toLocaleString()}</strong></span></div>
         <div className="hex-calculator-results">
           <div><small>ESTIMATED T-SHARES</small><strong>{result.tShares.toLocaleString(undefined, { maximumFractionDigits: 4 })}</strong><em>{result.bonusPercent.toFixed(2)}% stake bonus</em></div>
           <div><small>ESTIMATED YIELD</small><strong>{compactAmount(String(result.estimatedYield), 2)} HEX</strong><em>{metrics.price ? money(result.estimatedYield * metrics.price) : 'Live HEX value unavailable'}</em></div>
@@ -1180,7 +1205,7 @@ function App() {
   const [walletGroups, setWalletGroups] = useState<WalletGroup[]>(readGroups);
   const [selectedGroupId, setSelectedGroupId] = useState(() => readGroups()[0]?.id ?? DEFAULT_GROUP_ID);
   const [newGroupName, setNewGroupName] = useState('');
-  const [collapsedGroups, setCollapsedGroups] = useState<string[]>([]);
+  const [collapsedGroups, setCollapsedGroups] = useState<string[]>(() => readGroups().map(group => group.id));
   const [pendingDeleteGroupId, setPendingDeleteGroupId] = useState<string | null>(null);
   const [pendingDeleteWalletId, setPendingDeleteWalletId] = useState<string | null>(null);
   const [trackedCollapsed, setTrackedCollapsed] = useState(true);
@@ -1586,10 +1611,8 @@ function App() {
                   <span>Supply</span>
                   <b>{tokenStats[selectedToken]?.supply || 'N/A'}</b>
                 </div>
-                <div className="token-stat">
-                  <span>{selectedToken === 'PLS' ? 'Staked' : 'Holders'}</span>
-                  <b>{selectedToken === 'PLS' ? tokenStats[selectedToken]?.staked || 'Reading…' : tokenStats[selectedToken]?.holders || 'N/A'}</b>
-                </div>
+                <div className="token-stat"><span>Staked</span><b>{selectedToken === 'PLS' && !tokenStats[selectedToken]?.staked ? 'Reading…' : tokenStats[selectedToken]?.staked || 'N/A'}</b></div>
+                <div className="token-stat"><span>Holders</span><b>{tokenStats[selectedToken]?.holders || 'N/A'}</b></div>
               </div>
               <button className="token-chart-button" onClick={() => { const opening = !chartOpen; setChartOpen(opening); if (opening && chartData.length < 2) setChartRetry(value => value + 1); }}>{chartOpen ? 'Hide Chart' : 'Show Chart'} {chartOpen ? <ChevronDown size={16} style={{ transform: 'rotate(180deg)' }}/> : <ChevronDown size={16}/>}</button>
               {chartOpen && <><div className="chart-period-selector">
