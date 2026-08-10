@@ -1,6 +1,6 @@
 import React, { FormEvent, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowLeft, ArrowRight, ArrowUpRight, Calculator, ChartPie, ChevronDown, Copy, Eye, EyeOff, FolderPlus, Info, Languages, LockKeyhole, Network as NetworkIcon, Palette, Radio, RefreshCw, ScanSearch, Settings, ShieldCheck, SlidersHorizontal, Trash2, Vibrate, Volume2, VolumeX, WalletCards, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ArrowUpRight, Calculator, ChartPie, ChevronDown, Copy, Eye, EyeOff, FlaskConical, FolderPlus, Info, Languages, LockKeyhole, Network as NetworkIcon, Palette, Radio, RefreshCw, ScanSearch, Settings, ShieldCheck, SlidersHorizontal, Trash2, Vibrate, Volume2, VolumeX, WalletCards, X } from 'lucide-react';
 import { createChart, IChartApi, ISeriesApi, LineStyle, LineSeries } from 'lightweight-charts';
 import './styles.css';
 
@@ -8,7 +8,7 @@ type ChainNetwork = 'PulseChain' | 'Ethereum';
 type Network = ChainNetwork | 'Both';
 type Language = 'en' | 'fr' | 'es' | 'nl';
 type SettingsSection = 'language' | 'network' | 'customize' | 'sound' | 'info' | null;
-type CustomPanel = 'tracked' | 'address' | 'newWallet' | 'allocation' | 'hexStakes' | 'hexCalculator';
+type CustomPanel = 'tracked' | 'address' | 'newWallet' | 'allocation' | 'hexStakes' | 'hexCalculator' | 'hexSimulator';
 type PanelTheme = 'default' | 'pink' | 'green' | 'cyan' | 'purple' | 'gold' | 'hex' | 'pulse' | 'aurora' | 'cyber';
 type TrackedWallet = { id: string; label: string; address: string; network: Network; groupId?: string };
 type WalletGroup = { id: string; name: string };
@@ -27,6 +27,7 @@ type TokenStats = {
   liquidity: number;
   supply: string;
   holders: string;
+  staked?: string;
   loading: boolean;
   error: string;
 };
@@ -46,6 +47,7 @@ const PANEL_OPTIONS: { id: CustomPanel; label: string; cssVariable: string }[] =
   { id: 'allocation', label: 'Allocation', cssVariable: '--allocation-border' },
   { id: 'hexStakes', label: 'HEX stakes', cssVariable: '--hex-stakes-border' },
   { id: 'hexCalculator', label: 'HEX calculator', cssVariable: '--hex-calculator-border' },
+  { id: 'hexSimulator', label: 'HEX simulation', cssVariable: '--hex-simulator-border' },
 ];
 const PANEL_THEME_GRADIENTS: Record<Exclude<PanelTheme, 'default'>, string> = {
   pink: 'linear-gradient(135deg,#ff2ca8,#ff2ca8)',
@@ -60,6 +62,12 @@ const PANEL_THEME_GRADIENTS: Record<Exclude<PanelTheme, 'default'>, string> = {
 };
 const ALLOCATION_COLORS: Record<string, string> = { ETH: '#7868f2', WETH: '#627eea', PLS: '#35d8f2', WPLS: '#35d8f2', HEX: '#ff2ca8', PHEX: '#ff9d00', PLSX: '#00ed94', PRVX: '#a84cff', INC: '#00e6a8', HDRN: '#18c8ff', ICSA: '#f5b942', PDI: '#df48ff', PDA: '#ff8c42', ASIC: '#ffcf40', USDC: '#2775ca' };
 const ALLOCATION_FALLBACK_COLORS = ['#ff2ca8', '#8c38ff', '#14d9ff', '#00e6a8', '#ff9d00', '#f85f73'];
+const PULSECHAIN_OA_SUPPLY: Partial<Record<string, number>> = {
+  PLSX: 122e12,
+  PHEX: 563e9,
+  INC: 71e3,
+  PRVX: 951_992_149_160,
+};
 const LANGUAGE_OPTIONS: { id: Language; label: string; native: string }[] = [
   { id: 'en', label: 'English', native: 'English' },
   { id: 'es', label: 'Spanish', native: 'Español' },
@@ -106,6 +114,8 @@ const HEX_STAKE_SELECTORS = { currentDay: '0x5c9302c9', stakeCount: '0x33060d90'
 const HEX_CALCULATOR_SELECTORS = { globals: '0xc3124525', dailyDataRange: '0x6a210a0e' } as const;
 const HEX_STAKE_END_TOPIC = '0x72d9c5a7ab13846e08d9c838f9e866a1bb4a66a2fd3ba3c9e7da3cf9e394dfd7';
 const chartRequestCache = new Map<string, Promise<{ time: number; value: number }[]>>();
+let pulseChainStatsSnapshotRequest: Promise<Record<string, any>> | null = null;
+let pulseStakedSupplyRequest: Promise<string | null> | null = null;
 let geckoRequestQueue: Promise<unknown> = Promise.resolve();
 let lastGeckoRequestAt = 0;
 const CORE_ICONS: Record<string, string> = {
@@ -330,6 +340,7 @@ function formatUnits(value: string, decimals = 18) {
 function compactAmount(value: string, decimals = 1) {
   const number = Number(value);
   if (!Number.isFinite(number)) return value;
+  if (Math.abs(number) >= 1_000_000_000_000) return `${(number / 1_000_000_000_000).toFixed(decimals)}T`;
   if (Math.abs(number) >= 1_000_000_000) return `${(number / 1_000_000_000).toFixed(decimals)}B`;
   if (Math.abs(number) >= 1_000_000) return `${(number / 1_000_000).toFixed(decimals)}M`;
   if (Math.abs(number) >= 1_000) return `${(number / 1_000).toFixed(decimals)}K`;
@@ -337,6 +348,9 @@ function compactAmount(value: string, decimals = 1) {
 }
 function compactSupply(value: string) {
   return compactAmount(value, 2);
+}
+function compactUsd(value: number) {
+  return value > 0 ? `$${compactAmount(String(value), 1)}` : 'N/A';
 }
 function money(value: number | null) {
   if (value === null || !Number.isFinite(value)) return 'Price unavailable';
@@ -628,103 +642,148 @@ async function loadPortfolio(wallet: TrackedWallet): Promise<Asset[]> {
   return combined.sort((left, right) => (right.value ?? -1) - (left.value ?? -1));
 }
 
+async function fetchPulseStakedSupply() {
+  if (pulseStakedSupplyRequest) return pulseStakedSupplyRequest;
+  pulseStakedSupplyRequest = (async () => { try {
+    const response = await fetch('https://rpc-pulsechain.g4mm4.io/beacon-api/eth/v1/beacon/states/head/validators?status=active_ongoing');
+    if (!response.ok || !response.body) return null;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const marker = '"status":"active_ongoing"';
+    let carry = '';
+    let validatorCount = 0;
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const chunk = carry + decoder.decode(value, { stream: true });
+      validatorCount += chunk.split(marker).length - 1;
+      carry = chunk.slice(-(marker.length - 1));
+    }
+    return validatorCount > 0 ? compactSupply(String(validatorCount * 32_000_000)) : null;
+  } catch { return null; } })();
+  return pulseStakedSupplyRequest;
+}
+
+function fetchPulseChainStatsSnapshot() {
+  if (pulseChainStatsSnapshotRequest) return pulseChainStatsSnapshotRequest;
+  pulseChainStatsSnapshotRequest = fetch('https://r.jina.ai/http://www.pulsechainstats.com/api/data/24H')
+    .then(async response => {
+      if (!response.ok) throw new Error(`PulseChainStats reader returned ${response.status}`);
+      const text = await response.text();
+      const jsonStart = text.indexOf('{"data"');
+      if (jsonStart < 0) throw new Error('PulseChainStats payload was not found');
+      const payload = JSON.parse(text.slice(jsonStart).trim());
+      return payload?.data ?? {};
+    })
+    .catch(error => {
+      pulseChainStatsSnapshotRequest = null;
+      throw error;
+    });
+  return pulseChainStatsSnapshotRequest;
+}
+
 async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
   try {
     const baseExplorer = token.network === 'PulseChain' ? 'https://api.scan.pulsechain.com' : 'https://eth.blockscout.com';
-    
-    // Fetch token data from blockchain for supply and holders
-    const tokenData = await jsonRequest(`${baseExplorer}/api/v2/tokens/${token.contract}`, 10000);
-    
-    if (!tokenData) {
-      return { price: 0, change24h: 0, change7d: 0, change30d: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: false, error: 'Token not found' };
-    }
+    const chainId = token.network === 'PulseChain' ? 'pulsechain' : 'ethereum';
+    const [tokenData, dexData, pulseChainSnapshot] = await Promise.all([
+      jsonRequest(`${baseExplorer}/api/v2/tokens/${token.contract}`, 10000).catch(() => null),
+      jsonRequest(`https://api.dexscreener.com/latest/dex/tokens/${token.contract}`, 10000).catch(() => null),
+      token.network === 'PulseChain' ? fetchPulseChainStatsSnapshot().catch((): Record<string, any> => ({})) : Promise.resolve<Record<string, any>>({}),
+    ]);
 
-    // Get supply and holders from blockchain
+    const targetAddress = token.contract.toLowerCase();
+    const pairMap = new Map<string, any>();
+    for (const pair of Array.isArray(dexData?.pairs) ? dexData.pairs : []) {
+      if (pair?.chainId !== chainId) continue;
+      const base = String(pair?.baseToken?.address ?? '').toLowerCase();
+      const quote = String(pair?.quoteToken?.address ?? '').toLowerCase();
+      if (base !== targetAddress && quote !== targetAddress) continue;
+      const pairId = String(pair?.pairAddress ?? `${pair?.dexId}:${base}:${quote}`).toLowerCase();
+      if (!pairMap.has(pairId)) pairMap.set(pairId, pair);
+    }
+    const allPairs = [...pairMap.values()];
+    const liquidity = allPairs.reduce((total, pair) => total + Math.max(0, Number(pair?.liquidity?.usd ?? 0)), 0);
+    const pricedPairs = allPairs.filter(pair => String(pair?.baseToken?.address ?? '').toLowerCase() === targetAddress && Number(pair?.priceUsd) > 0);
+    const priceWeight = pricedPairs.reduce((total, pair) => total + Math.max(0, Number(pair?.liquidity?.usd ?? 0)), 0);
+    let price = priceWeight > 0
+      ? pricedPairs.reduce((total, pair) => total + Number(pair.priceUsd) * Math.max(0, Number(pair?.liquidity?.usd ?? 0)), 0) / priceWeight
+      : Number(pricedPairs[0]?.priceUsd ?? 0);
+    let change24h = priceWeight > 0
+      ? pricedPairs.reduce((total, pair) => total + Number(pair?.priceChange?.h24 ?? 0) * Math.max(0, Number(pair?.liquidity?.usd ?? 0)), 0) / priceWeight
+      : Number(pricedPairs[0]?.priceChange?.h24 ?? 0);
+
+    let supplyNumber = 0;
     let supply = 'N/A';
     let holders = 'N/A';
-    
-    if (tokenData.total_supply) {
+    if (tokenData?.total_supply) {
       const decimals = tokenData.decimals ?? 18;
-      const formatted = formatUnits(String(tokenData.total_supply), decimals);
-      supply = compactSupply(formatted);
+      supplyNumber = Number(formatUnits(String(tokenData.total_supply), decimals));
     }
-    
-    if (tokenData.holders) {
+    if (tokenData?.holders) {
       const holderCount = Number(tokenData.holders);
       holders = holderCount >= 1000 ? compactAmount(String(holderCount), 1) : holderCount.toLocaleString();
     }
-    
-    // USD price order: on-chain oracle, DEX-derived data, then CoinGecko last.
-    let price = 0;
-    let liquidity = 0;
+
     let marketCap = 0;
-    let change24h = 0;
-    let change7d = 0;
-    let change30d = 0;
-    
-    const oraclePrice = token.symbol === 'ETH' ? await ethereumOraclePrice() : null;
+    const coinGeckoIds: Record<string, string> = { ETH: 'ethereum', PLS: 'pulsechain', HEX: 'hex', pHEX: 'hex', PLSX: 'pulsex', PRVX: 'provex', INC: 'incentive' };
+    const coinId = coinGeckoIds[token.symbol];
+    let coinGeckoMarketCap = 0;
     try {
-      const chainId = token.network === 'PulseChain' ? 'pulsechain' : 'ethereum';
-      const dexData = await jsonRequest(`https://api.dexscreener.com/latest/dex/tokens/${token.contract}`, 10000);
-      const pairs = (Array.isArray(dexData.pairs) ? dexData.pairs : []).filter((pair: any) => 
-        pair.chainId === chainId && 
-        pair.baseToken?.address?.toLowerCase() === token.contract.toLowerCase() && 
-        Number(pair.priceUsd) > 0
-      );
-      const pair = pairs.sort((left: any, right: any) => Number(right.liquidity?.usd ?? 0) - Number(left.liquidity?.usd ?? 0))[0];
-      
-      if (pair) {
-        price = Number(pair.priceUsd);
-        liquidity = Number(pair.liquidity?.usd ?? 0);
-        const fdv = Number(pair.fdv ?? 0);
-        marketCap = fdv > 0 ? fdv : liquidity * 10;
-        change24h = Number(pair.priceChange?.h24 ?? 0);
+      if (coinId) {
+        const cgData = await jsonRequest(`https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd&include_market_cap=true&include_24hr_change=true`, 10000);
+        const coin = cgData?.[coinId];
+        if (!(price > 0)) price = Number(coin?.usd ?? 0);
+        coinGeckoMarketCap = Number(coin?.usd_market_cap ?? 0);
+        if (!Number.isFinite(change24h)) change24h = Number(coin?.usd_24h_change ?? 0);
       }
-    } catch { /* GeckoTerminal is the next DEX-data source. */ }
+    } catch { /* DEX aggregation remains the primary live source. */ }
+
+    const oraclePrice = token.symbol === 'ETH' ? await ethereumOraclePrice() : null;
     if (oraclePrice) price = oraclePrice;
-    if (price === 0) {
+    if (!(price > 0)) {
       try {
-        const chain = token.network === 'Ethereum' ? 'eth' : 'pulsechain';
-        const gtData = await geckoRequest(`https://api.geckoterminal.com/api/v2/simple/networks/${chain}/token_price/${token.contract}`, 10000);
-        price = Number(gtData?.data?.attributes?.token_prices?.[token.contract.toLowerCase()] ?? 0);
-      } catch { /* CoinGecko is the final fallback. */ }
-    }
-    if (price === 0) {
-      try {
-        const coinGeckoIds: Record<string, string> = { ETH: 'ethereum', PLS: 'pulsechain', HEX: 'hex', pHEX: 'hex', PLSX: 'pulsex', PRVX: 'provex', INC: 'incentive' };
-        const coinId = coinGeckoIds[token.symbol];
-        if (coinId) {
-          const cgData = await jsonRequest(`https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd&include_market_cap=true&include_24hr_change=true`, 10000);
-          price = Number(cgData?.[coinId]?.usd ?? 0);
-          marketCap = Number(cgData?.[coinId]?.usd_market_cap ?? marketCap);
-          change24h = Number(cgData?.[coinId]?.usd_24h_change ?? change24h);
-        }
-      } catch { /* Keep the price unavailable instead of inventing one. */ }
-    }
-    
-    if (marketCap === 0 && price > 0 && tokenData.total_supply) {
-      const decimals = tokenData.decimals ?? 18;
-      const supplyNum = Number(formatUnits(String(tokenData.total_supply), decimals));
-      marketCap = price * supplyNum;
+        const gtNetwork = token.network === 'Ethereum' ? 'eth' : 'pulsechain';
+        const gtData = await geckoRequest(`https://api.geckoterminal.com/api/v2/simple/networks/${gtNetwork}/token_price/${token.contract}`, 10000);
+        price = Number(gtData?.data?.attributes?.token_prices?.[targetAddress] ?? 0);
+      } catch { /* Keep unavailable rather than inventing a price. */ }
     }
 
-    change7d = change24h;
-    change30d = change24h;
-    
-    return { 
-      price, 
-      change24h, 
-      change7d,
-      change30d,
-      marketCap: marketCap / 1000000,
-      liquidity: liquidity / 1000000,
-      supply, 
-      holders, 
-      loading: false, 
-      error: '' 
+    if (token.symbol === 'PLS' && coinGeckoMarketCap > 0 && price > 0) {
+      supplyNumber = coinGeckoMarketCap / price;
+    } else if (token.network === 'PulseChain') {
+      supplyNumber = Math.max(0, supplyNumber - (PULSECHAIN_OA_SUPPLY[tokenKey(token.symbol)] ?? 0));
+    }
+    if (supplyNumber > 0) supply = compactSupply(String(supplyNumber));
+    marketCap = token.symbol === 'ETH' && coinGeckoMarketCap > 0 ? coinGeckoMarketCap : price > 0 && supplyNumber > 0 ? price * supplyNumber : Number(pricedPairs[0]?.fdv ?? 0);
+
+    let resolvedLiquidity = liquidity;
+    const pulseChainStatsKey: Partial<Record<string, string>> = { PLS: 'pls', PHEX: 'hex', PLSX: 'plsx', PRVX: 'prvx', INC: 'inc' };
+    const pulseChainCurrent = pulseChainSnapshot?.[pulseChainStatsKey[tokenKey(token.symbol)] ?? '']?.current;
+    if (pulseChainCurrent) {
+      price = Number(pulseChainCurrent.price ?? price);
+      marketCap = Number(pulseChainCurrent.marketCapOAExcluded ?? pulseChainCurrent.marketCap ?? marketCap);
+      supplyNumber = Number(pulseChainCurrent.supplyOAExcluded ?? pulseChainCurrent.supply ?? supplyNumber);
+      supply = supplyNumber > 0 ? compactSupply(String(supplyNumber)) : supply;
+      const sourceLiquidity = Number(pulseChainCurrent.liquidity ?? liquidity);
+      if (sourceLiquidity > 0) resolvedLiquidity = sourceLiquidity;
+      if (Number(pulseChainCurrent.holders) > 0) holders = compactAmount(String(pulseChainCurrent.holders), 1);
+    }
+
+    return {
+      price,
+      change24h: Number.isFinite(change24h) ? change24h : 0,
+      change7d: Number.isFinite(change24h) ? change24h : 0,
+      change30d: Number.isFinite(change24h) ? change24h : 0,
+      marketCap: marketCap / 1_000_000,
+      liquidity: resolvedLiquidity / 1_000_000,
+      supply,
+      holders,
+      loading: false,
+      error: allPairs.length || price > 0 ? '' : 'Live market data is temporarily unavailable',
     };
-  } catch (e) {
-    console.log('fetchTokenStats error:', e);
+  } catch (error) {
+    console.warn('fetchTokenStats error:', error);
     return { price: 0, change24h: 0, change7d: 0, change30d: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: false, error: 'Failed to load' };
   }
 }
@@ -1072,6 +1131,50 @@ function HexCalculatorPanel({ open, network, metrics, onToggle, onNetwork, onRef
   </section>;
 }
 
+function HexSimulationCalculatorPanel({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  const [amount, setAmount] = useState('30000');
+  const [duration, setDuration] = useState('1');
+  const [unit, setUnit] = useState<'days' | 'months' | 'years'>('years');
+  const [hexPrice, setHexPrice] = useState('0.01');
+  const [hexPerTShare, setHexPerTShare] = useState('30000');
+  const [dailyPayout, setDailyPayout] = useState('6.5');
+  const cleanNumber = (value: string) => Math.max(0, Number(value.replace(/,/g, '')) || 0);
+  const formatInput = (value: string) => { const [whole, fraction] = value.split('.'); return `${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}${fraction !== undefined ? `.${fraction}` : ''}`; };
+  const updateNumber = (value: string, setter: (value: string) => void) => { const cleaned = value.replace(/,/g, '').replace(/[^0-9.]/g, ''); const [whole, ...fraction] = cleaned.split('.'); setter(`${whole}${fraction.length ? `.${fraction.join('')}` : ''}`); };
+  const amountHex = cleanNumber(amount);
+  const durationValue = cleanNumber(duration);
+  const days = Math.max(1, Math.min(5555, Math.round(unit === 'years' ? durationValue * 365 : unit === 'months' ? durationValue * 30.4375 : durationValue)));
+  const simulatedPrice = cleanNumber(hexPrice);
+  const oneTShareHex = cleanNumber(hexPerTShare);
+  const payout = cleanNumber(dailyPayout);
+  const simulationMetrics: HexCalculatorMetrics = { network: 'PulseChain', shareRate: oneTShareHex * 10, oneTShareHex, dailyHexPerTShare: payout, price: simulatedPrice, sampleDays: 0, loading: false, error: '' };
+  const result = calculateHexStake(amountHex, days, simulationMetrics);
+  const endDate = new Date(Date.now() + days * 86_400_000).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  return <section className={`hex-simulator-panel ${open ? 'open' : ''}`}>
+    <button className="hex-simulator-fold" type="button" onClick={onToggle} aria-expanded={open}>
+      <span className="hex-simulator-title"><i><FlaskConical size={22}/></i><span><small>MANUAL FUTURE SCENARIO</small><b>HEX Calculator Simulation</b></span></span><ChevronDown size={17}/>
+    </button>
+    {open && <div className="hex-simulator-body">
+      <p className="hex-simulator-intro">Enter your own future HEX price, share rate and payout assumptions. Nothing below changes the live calculator.</p>
+      <div className="hex-simulator-fields">
+        <label><span>HEX to stake</span><input inputMode="decimal" value={formatInput(amount)} onChange={event => updateNumber(event.target.value, setAmount)} aria-label="Simulation HEX amount"/></label>
+        <label><span>Stake length</span><div><input inputMode="decimal" value={duration} onChange={event => updateNumber(event.target.value, setDuration)} aria-label="Simulation stake duration"/><select value={unit} onChange={event => setUnit(event.target.value as 'days' | 'months' | 'years')} aria-label="Simulation duration unit"><option value="days">Days</option><option value="months">Months</option><option value="years">Years</option></select></div></label>
+        <label><span>Simulated HEX price</span><div className="simulator-money-input"><i>$</i><input inputMode="decimal" value={hexPrice} onChange={event => updateNumber(event.target.value, setHexPrice)} aria-label="Simulated HEX price"/></div></label>
+        <label><span>HEX per base T-share</span><input inputMode="decimal" value={formatInput(hexPerTShare)} onChange={event => updateNumber(event.target.value, setHexPerTShare)} aria-label="Simulated HEX per T-share"/></label>
+        <label className="simulator-wide-field"><span>Daily HEX payout per T-share</span><input inputMode="decimal" value={dailyPayout} onChange={event => updateNumber(event.target.value, setDailyPayout)} aria-label="Simulated daily HEX payout per T-share"/></label>
+      </div>
+      {result ? <div className="hex-simulator-results">
+        <div><small>ESTIMATED T-SHARES</small><strong>{result.tShares.toLocaleString(undefined, { maximumFractionDigits: 4 })}</strong><em>{result.bonusPercent.toFixed(2)}% stake bonus</em></div>
+        <div><small>ESTIMATED YIELD</small><strong>{compactAmount(String(result.estimatedYield), 2)} HEX</strong><em>Using {payout.toLocaleString()} HEX / T-share / day</em></div>
+        <div><small>ESTIMATED RETURN</small><strong>{compactAmount(String(result.estimatedReturn), 2)} HEX</strong><em>Principal + simulated yield</em></div>
+        <div><small>SIMULATED END VALUE</small><strong className="simulator-usd-value">{money(result.estimatedReturn * simulatedPrice)}</strong><em>At {money(simulatedPrice)} per HEX</em></div>
+        <div className="simulator-end-date"><small>ESTIMATED END DATE</small><strong>{endDate}</strong><em>{days.toLocaleString()} days</em></div>
+      </div> : <div className="hex-calculator-status">Enter positive values to build a simulation.</div>}
+      <p className="hex-simulator-note"><Info size={13}/>This is a user-defined scenario, not a prediction. Real future share rate, daily payouts and HEX price can differ substantially.</p>
+    </div>}
+  </section>;
+}
+
 function App() {
   const [wallets, setWallets] = useState<TrackedWallet[]>(readWallets);
   const [walletGroups, setWalletGroups] = useState<WalletGroup[]>(readGroups);
@@ -1089,6 +1192,7 @@ function App() {
   const [hexStakeRefresh, setHexStakeRefresh] = useState(0);
   const [hexStakeState, setHexStakeState] = useState<HexStakeState>({ stakes: [], endedStakes: [], loading: true, error: '', refreshedAt: null, network: 'Both' });
   const [hexCalculatorOpen, setHexCalculatorOpen] = useState(false);
+  const [hexSimulatorOpen, setHexSimulatorOpen] = useState(false);
   const [hexCalculatorNetwork, setHexCalculatorNetwork] = useState<ChainNetwork>(() => readNetwork() === 'Ethereum' ? 'Ethereum' : 'PulseChain');
   const [hexCalculatorRefresh, setHexCalculatorRefresh] = useState(0);
   const [hexCalculatorMetrics, setHexCalculatorMetrics] = useState<HexCalculatorMetrics>({ network: readNetwork() === 'Ethereum' ? 'Ethereum' : 'PulseChain', shareRate: 0, oneTShareHex: 0, dailyHexPerTShare: 0, price: null, sampleDays: 0, loading: true, error: '' });
@@ -1139,10 +1243,13 @@ function App() {
   useEffect(() => { if (!wallets.some(wallet => wallet.id === selectedId)) setSelectedId(wallets[0]?.id ?? ''); }, [wallets, selectedId]);
   useEffect(() => setShowAllAssets(false), [selectedId]);
   useEffect(() => { setChartOpen(false); setChartPeriod('24H'); setChartData([]); setChartPercentage(0); setChartLoading(false); }, [selectedToken]);
+  useEffect(() => {
+    if (selectedToken && chartPeriod === '24H' && !chartOpen && !tokenStats[selectedToken]?.loading) setChartPercentage(tokenStats[selectedToken]?.change24h ?? null);
+  }, [selectedToken, chartPeriod, chartOpen, tokenStats]);
 
   useEffect(() => {
     if (!soundEnabled && !hapticEnabled) return;
-    const soundTargets = '.panel-fold,.group-fold,.new-wallet-fold,.allocation-fold,.hex-stakes-fold,.hex-calculator-fold';
+    const soundTargets = '.panel-fold,.group-fold,.new-wallet-fold,.allocation-fold,.hex-stakes-fold,.hex-calculator-fold,.hex-simulator-fold';
     const handlePanelClick = (event: MouseEvent) => {
       if ((event.target as HTMLElement).closest(soundTargets)) {
         if (soundEnabled) playPanelChime();
@@ -1432,7 +1539,14 @@ function App() {
           <p>{ui.subtitle}</p>
           <div className="trust-row"><span><LockKeyhole size={15}/>{ui.noConnection}</span><span><ShieldCheck size={15}/>{ui.noSeed}</span><span className="trust-live"><Radio size={12}/>Live</span></div>
           <div className="ecosystem-strip"><span>{ui.builtFor}</span><div>{['ETH', 'PLS', 'HEX', 'pHEX', 'cHEX', 'PLSX', 'PRVX', 'INC'].map(sym => (
-            <button key={sym} className={`eco-token-btn ${sym === 'cHEX' ? 'combined-hex' : ''} ${selectedToken === sym ? 'active' : ''}`} onClick={() => { setSelectedToken(sym); if (!tokenStats[sym]) { setTokenStats(current => ({ ...current, [sym]: { price: 0, change24h: 0, change7d: 0, change30d: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStatsForSymbol(sym).then(stats => setTokenStats(current => ({ ...current, [sym]: stats }))); } }}>
+            <button key={sym} className={`eco-token-btn ${sym === 'cHEX' ? 'combined-hex' : ''} ${selectedToken === sym ? 'active' : ''}`} onClick={() => {
+              setSelectedToken(sym);
+              if (!tokenStats[sym]) {
+                setTokenStats(current => ({ ...current, [sym]: { price: 0, change24h: 0, change7d: 0, change30d: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } }));
+                void fetchTokenStatsForSymbol(sym).then(stats => setTokenStats(current => ({ ...current, [sym]: { ...stats, staked: current[sym]?.staked ?? stats.staked } })));
+              }
+              if (sym === 'PLS' && !tokenStats.PLS?.staked) void fetchPulseStakedSupply().then(staked => { if (staked) setTokenStats(current => ({ ...current, PLS: { ...(current.PLS ?? { price: 0, change24h: 0, change7d: 0, change30d: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' }), staked } })); });
+            }}>
               <img src={CORE_ICONS[tokenKey(sym)] || ''} alt={sym} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}/>
               <span>{sym}</span>
             </button>
@@ -1449,47 +1563,44 @@ function App() {
                   </div>
                   <div>
                     <h3>{selectedToken}</h3>
-                    <div className="token-subtitle-row">
-                      <p>{TOKEN_DATA[selectedToken].subtitle}</p>
-                      <span className={`token-price-change ${chartPercentage === null || chartPercentage >= 0 ? 'positive' : 'negative'}`}>
-                        {chartLoading ? 'Loading' : chartPercentage === null ? 'Unavailable' : `${chartPercentage >= 0 ? '+' : ''}${chartPercentage.toFixed(2)}%`} <small>{chartPeriod}</small>
-                      </span>
-                    </div>
+                    <div className="token-subtitle-row"><p>{TOKEN_DATA[selectedToken].subtitle}</p></div>
                   </div>
                 </div>
                 <div className="token-panel-price">
                   <span className="token-price-value green-value">{tokenStats[selectedToken]?.price ? money(tokenStats[selectedToken].price) : 'Loading...'}</span>
+                  <span className={`token-price-change ${chartPercentage === null || chartPercentage >= 0 ? 'positive' : 'negative'}`}>
+                    {chartLoading ? 'Loading' : chartPercentage === null ? 'Unavailable' : `${chartPercentage >= 0 ? '+' : ''}${chartPercentage.toFixed(2)}%`} <small>{chartPeriod}</small>
+                  </span>
                 </div>
-              </div>
-              <div className="chart-period-selector">
-                {['24H', '7D', '30D', '3M', '6M', '1Y', 'ATL', 'All'].map(p => (
-                  <button key={p} className={`chart-period-btn ${chartPeriod === p ? 'active' : ''}`} onClick={() => { setChartPercentage(fallbackPercentage(tokenStats[selectedToken], p)); setChartPeriod(p); setChartOpen(true); }}>{p}</button>
-                ))}
               </div>
               <div className="token-stats-row">
                 <div className="token-stat">
-                  <span>MC</span>
-                  <b className="green-value">{tokenStats[selectedToken]?.marketCap ? `$${tokenStats[selectedToken].marketCap.toFixed(1)}M` : 'N/A'}</b>
+                  <span>Market Cap</span>
+                  <b className="green-value">{tokenStats[selectedToken]?.marketCap ? compactUsd(tokenStats[selectedToken].marketCap * 1_000_000) : 'N/A'}</b>
                 </div>
                 <div className="token-stat">
                   <span>Liquidity</span>
-                  <b className="green-value">{tokenStats[selectedToken]?.liquidity ? `$${tokenStats[selectedToken].liquidity.toFixed(1)}M` : 'N/A'}</b>
+                  <b className="green-value">{tokenStats[selectedToken]?.liquidity ? compactUsd(tokenStats[selectedToken].liquidity * 1_000_000) : 'N/A'}</b>
                 </div>
                 <div className="token-stat">
                   <span>Supply</span>
                   <b>{tokenStats[selectedToken]?.supply || 'N/A'}</b>
                 </div>
                 <div className="token-stat">
-                  <span>Holders</span>
-                  <b>{tokenStats[selectedToken]?.holders || 'N/A'}</b>
+                  <span>{selectedToken === 'PLS' ? 'Staked' : 'Holders'}</span>
+                  <b>{selectedToken === 'PLS' ? tokenStats[selectedToken]?.staked || 'Reading…' : tokenStats[selectedToken]?.holders || 'N/A'}</b>
                 </div>
               </div>
               <button className="token-chart-button" onClick={() => { const opening = !chartOpen; setChartOpen(opening); if (opening && chartData.length < 2) setChartRetry(value => value + 1); }}>{chartOpen ? 'Hide Chart' : 'Show Chart'} {chartOpen ? <ChevronDown size={16} style={{ transform: 'rotate(180deg)' }}/> : <ChevronDown size={16}/>}</button>
-              {chartOpen && <div className="token-chart-container">
+              {chartOpen && <><div className="chart-period-selector">
+                {['24H', '7D', '30D', '3M', '6M', '1Y', 'ATL', 'All'].map(p => (
+                  <button key={p} className={`chart-period-btn ${chartPeriod === p ? 'active' : ''}`} onClick={() => { setChartPercentage(fallbackPercentage(tokenStats[selectedToken], p)); setChartPeriod(p); }}>{p}</button>
+                ))}
+              </div><div className="token-chart-container">
                 {chartLoading ? <div className="chart-status"><RefreshCw size={17} className="spin-icon"/>Building {chartPeriod} chart…</div>
                   : chartData.length >= 2 ? <div ref={chartContainerRef} className="token-chart" role="img" aria-label={`${selectedToken} ${chartPeriod} price chart`} data-chart-points={chartData.length}/>
                     : <div className="chart-status">No verified price history is available for this range.</div>}
-              </div>}
+              </div></>}
               <button className="token-close-button" onClick={() => setSelectedToken(null)}>Close</button>
             </div>
           </div>}
@@ -1562,6 +1673,7 @@ function App() {
       {wallets.length > 0 && <HexStakesPanel state={hexStakeState} open={hexStakesOpen} filter={hexStakeFilter} network={hexStakeNetwork} walletCount={wallets.length} privateMode={privateMode} onToggle={() => setHexStakesOpen(value => !value)} onFilter={setHexStakeFilter} onNetwork={selectHexStakeNetwork} onRefresh={() => setHexStakeRefresh(value => value + 1)}/>}
 
       <HexCalculatorPanel open={hexCalculatorOpen} network={hexCalculatorNetwork} metrics={hexCalculatorMetrics} onToggle={() => setHexCalculatorOpen(value => !value)} onNetwork={setHexCalculatorNetwork} onRefresh={() => setHexCalculatorRefresh(value => value + 1)}/>
+      <HexSimulationCalculatorPanel open={hexSimulatorOpen} onToggle={() => setHexSimulatorOpen(value => !value)}/>
 
       {wallets.length === 0 && <section className="next-preview"><p className="eyebrow">WHAT COMES NEXT</p><h2>Your wallet becomes a living dashboard.</h2><div className="preview-panels"><div/><div/><div/></div><p>Token panels inspired by your reference design will appear here after we connect live portfolio data.</p></section>}
     </main>
@@ -1597,10 +1709,12 @@ function App() {
         </div>
       </div>}
       {settingsSection === 'sound' && <div className="sound-settings"><div className="settings-subheading"><Volume2 size={16}/><span><b>Panel sound</b><small>A louder cyber chime for panel controls</small></span></div><div className="settings-network-options sound-options" role="group" aria-label="Panel sound"><button type="button" className={`enabled-option ${soundEnabled ? 'active' : ''}`} aria-pressed={soundEnabled} onClick={() => { setSoundEnabled(true); playPanelChime(); }}><i><Volume2 size={20}/></i><span><b>Sound on</b><small>Play the chime when panels open or close</small></span></button><button type="button" className={`disabled-option ${!soundEnabled ? 'active' : ''}`} aria-pressed={!soundEnabled} onClick={() => setSoundEnabled(false)}><i><VolumeX size={20}/></i><span><b>Sound off</b><small>Keep panel controls silent</small></span></button></div><div className="settings-subheading haptic-heading"><Vibrate size={16}/><span><b>Haptic feedback</b><small>Phone vibration where supported by the browser</small></span></div><div className="settings-network-options sound-options" role="group" aria-label="Panel haptics"><button type="button" className={`enabled-option ${hapticEnabled ? 'active' : ''}`} aria-pressed={hapticEnabled} onClick={() => { setHapticEnabled(true); triggerHaptic(); }}><i><Vibrate size={20}/></i><span><b>Haptics on</b><small>Vibrate briefly when a panel is pressed</small></span></button><button type="button" className={`disabled-option ${!hapticEnabled ? 'active' : ''}`} aria-pressed={!hapticEnabled} onClick={() => setHapticEnabled(false)}><i><X size={20}/></i><span><b>Haptics off</b><small>Disable vibration feedback</small></span></button></div></div>}
-      {settingsSection === 'info' && <div className="settings-info"><p>This is a watch-only portfolio. It never requests a seed phrase and cannot move your cryptocurrency.</p><article><b>Cryptocurrency logo row</b><span>Press ETH, PLS, HEX, pHEX, cHEX, PLSX, PRVX, or INC to open its live market panel. Choose a time range and press Show Chart to view its price history. cHEX combines Ethereum HEX and PulseChain pHEX market data.</span></article><article><b>Your tracked wallets</b><span>Opens your locally saved watch-only addresses, wallet totals, live assets, dust controls, naming, explorer access, and the protected address-delete flow.</span></article><article><b>Enter a public address</b><span>Add a public 0x address and choose Ethereum, PulseChain, or both networks. Public addresses remain stored only in this browser.</span></article><article><b>Create another wallet</b><span>Create named groups such as Personal or Whales, then organize multiple tracked addresses inside them.</span></article><article><b>Portfolio allocation</b><span>Combines priced assets from all tracked addresses into a cryptocurrency allocation chart for Ethereum, PulseChain, or both.</span></article><article><b>HEX Stakes</b><span>Reads open, matured, and previously ended HEX stakes directly from the selected blockchain contracts across your tracked addresses.</span></article><article><b>HEX Calculator</b><span>Enter a HEX amount and stake length in days, months, or years. It uses the live share rate and recent on-chain payouts to estimate T-shares and potential return; future returns are not guaranteed.</span></article></div>}
+      {settingsSection === 'info' && <div className="settings-info"><p>This is a watch-only portfolio. It never requests a seed phrase and cannot move your cryptocurrency.</p><article><b>Cryptocurrency logo row</b><span>Press ETH, PLS, HEX, pHEX, cHEX, PLSX, PRVX, or INC to open its live market panel. Choose a time range and press Show Chart to view its price history. cHEX combines Ethereum HEX and PulseChain pHEX market data.</span></article><article><b>Your tracked wallets</b><span>Opens your locally saved watch-only addresses, wallet totals, live assets, dust controls, naming, explorer access, and the protected address-delete flow.</span></article><article><b>Enter a public address</b><span>Add a public 0x address and choose Ethereum, PulseChain, or both networks. Public addresses remain stored only in this browser.</span></article><article><b>Create another wallet</b><span>Create named groups such as Personal or Whales, then organize multiple tracked addresses inside them.</span></article><article><b>Portfolio allocation</b><span>Combines priced assets from all tracked addresses into a cryptocurrency allocation chart for Ethereum, PulseChain, or both.</span></article><article><b>HEX Stakes</b><span>Reads open, matured, and previously ended HEX stakes directly from the selected blockchain contracts across your tracked addresses.</span></article><article><b>HEX Calculator</b><span>Enter a HEX amount and stake length in days, months, or years. It uses the live share rate and recent on-chain payouts to estimate T-shares and potential return; future returns are not guaranteed.</span></article><article><b>HEX Calculator Simulation</b><span>Enter your own HEX price, HEX per T-share and daily payout assumptions to explore a manual future scenario without changing the live calculator.</span></article></div>}
     </section>}
     <footer><div className="footer-tools"><button className={`settings-button ${settingsOpen ? 'active' : ''}`} type="button" onClick={() => { const opening = !settingsOpen; setSettingsSection(null); setSettingsOpen(opening); if (opening) window.scrollTo({ top: 0, left: 0, behavior: 'auto' }); }} aria-expanded={settingsOpen}><Settings size={15}/>{ui.settings}</button><button className="refresh-button" onClick={refreshApp} aria-label="Refresh PulseVault"><RefreshCw size={14}/>{ui.refresh}</button></div><span>{ui.footer}</span></footer>
   </div>;
 }
 
-createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);
+const rootHost = globalThis as typeof globalThis & { __pulseVaultReactRoot?: ReturnType<typeof createRoot> };
+const appRoot = rootHost.__pulseVaultReactRoot ??= createRoot(document.getElementById('root')!);
+appRoot.render(<React.StrictMode><App/></React.StrictMode>);
