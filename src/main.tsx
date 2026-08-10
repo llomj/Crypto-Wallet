@@ -12,6 +12,8 @@ type TrackedWallet = { id: string; label: string; address: string; network: Netw
 type WalletGroup = { id: string; name: string };
 type Asset = { id: string; symbol: string; name: string; amount: string; price: number | null; value: number | null; icon: string | null; network: ChainNetwork; native?: boolean; decimals?: number };
 type Portfolio = { assets: Asset[]; loading: boolean; error: string; refreshedAt: number | null; network: Network };
+type HexStake = { id: string; walletId: string; walletLabel: string; network: ChainNetwork; stakeId: string; stakedHex: number; lockedDay: number; stakedDays: number; endDay: number; unlockedDay: number; currentDay: number; price: number | null };
+type HexStakeState = { stakes: HexStake[]; loading: boolean; error: string; refreshedAt: number | null; network: Network };
 type TokenStats = {
   price: number;
   change24h: number;
@@ -69,6 +71,8 @@ const RPC_URLS: Record<ChainNetwork, string[]> = {
 };
 const GECKO_NETWORK: Record<ChainNetwork, string> = { PulseChain: 'pulsechain', Ethereum: 'eth' };
 const ETH_USD_FEED = '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419';
+const HEX_LAUNCH_MS = Date.UTC(2019, 11, 3);
+const HEX_STAKE_SELECTORS = { currentDay: '0x5c9302c9', stakeCount: '0x33060d90', stakeLists: '0x2607443b' } as const;
 const chartRequestCache = new Map<string, Promise<{ time: number; value: number }[]>>();
 let geckoRequestQueue: Promise<unknown> = Promise.resolve();
 let lastGeckoRequestAt = 0;
@@ -304,6 +308,55 @@ async function rpcRequest<T>(network: ChainNetwork, method: string, params: unkn
     }
   }
   throw lastError instanceof Error ? lastError : new Error('RPC request failed');
+}
+
+function abiWord(value: string | number) {
+  const raw = typeof value === 'number' ? BigInt(value).toString(16) : value.toLowerCase().replace(/^0x/, '');
+  return raw.padStart(64, '0');
+}
+
+function decodeAbiWords(value: string) {
+  return value.replace(/^0x/, '').match(/.{64}/g) ?? [];
+}
+
+async function readHexStakes(wallets: TrackedWallet[], selectedNetwork: Network): Promise<{ stakes: HexStake[]; failed: ChainNetwork[] }> {
+  const chains: ChainNetwork[] = selectedNetwork === 'Both' ? ['Ethereum', 'PulseChain'] : [selectedNetwork];
+  const results = await Promise.allSettled(chains.map(async chain => {
+    const contract = VERIFIED_TOKEN_CONTRACTS[chain]?.HEX;
+    if (!contract) throw new Error(`${chain} HEX contract is unavailable`);
+    const priceToken = TOKEN_DATA[chain === 'Ethereum' ? 'HEX' : 'pHEX'];
+    const [dayResult, priceResult] = await Promise.allSettled([
+      rpcRequest<string>(chain, 'eth_call', [{ to: contract, data: HEX_STAKE_SELECTORS.currentDay }, 'latest']),
+      fetchTokenStats(priceToken),
+    ]);
+    if (dayResult.status !== 'fulfilled') throw dayResult.reason;
+    const currentDay = Number(BigInt(dayResult.value));
+    const price = priceResult.status === 'fulfilled' && priceResult.value.price > 0 ? priceResult.value.price : null;
+    const walletResults = await Promise.allSettled(wallets.map(async wallet => {
+      const addressWord = abiWord(wallet.address);
+      const countHex = await rpcRequest<string>(chain, 'eth_call', [{ to: contract, data: `${HEX_STAKE_SELECTORS.stakeCount}${addressWord}` }, 'latest']);
+      const count = Math.min(Number(BigInt(countHex)), 100);
+      const stakeResults = await Promise.allSettled(Array.from({ length: count }, (_, index) =>
+        rpcRequest<string>(chain, 'eth_call', [{ to: contract, data: `${HEX_STAKE_SELECTORS.stakeLists}${addressWord}${abiWord(index)}` }, 'latest'])
+      ));
+      return stakeResults.flatMap((stakeResult, index) => {
+        if (stakeResult.status !== 'fulfilled') return [];
+        const words = decodeAbiWords(stakeResult.value);
+        if (words.length < 7) return [];
+        const stakeId = BigInt(`0x${words[0]}`).toString();
+        const stakedHex = Number(BigInt(`0x${words[1]}`)) / 1e8;
+        const lockedDay = Number(BigInt(`0x${words[3]}`));
+        const stakedDays = Number(BigInt(`0x${words[4]}`));
+        const unlockedDay = Number(BigInt(`0x${words[5]}`));
+        return [{ id: `${chain}-${wallet.id}-${stakeId || index}`, walletId: wallet.id, walletLabel: wallet.label, network: chain, stakeId, stakedHex, lockedDay, stakedDays, endDay: lockedDay + stakedDays, unlockedDay, currentDay, price } satisfies HexStake];
+      });
+    }));
+    return walletResults.flatMap(result => result.status === 'fulfilled' ? result.value : []);
+  }));
+  return {
+    stakes: results.flatMap(result => result.status === 'fulfilled' ? result.value : []).sort((left, right) => left.endDay - right.endDay),
+    failed: results.flatMap((result, index) => result.status === 'rejected' ? [chains[index]] : []),
+  };
 }
 
 function hexQuantityToUnits(value: string, decimals = 18) {
@@ -668,6 +721,43 @@ function fallbackPercentage(stats: TokenStats | undefined, period: string): numb
   return null;
 }
 
+function HexStakesPanel({ state, open, filter, walletCount, privateMode, onToggle, onFilter, onRefresh }: { state: HexStakeState; open: boolean; filter: 'all' | 'active' | 'matured'; walletCount: number; privateMode: boolean; onToggle: () => void; onFilter: (filter: 'all' | 'active' | 'matured') => void; onRefresh: () => void }) {
+  const isMatured = (stake: HexStake) => stake.currentDay >= stake.endDay;
+  const activeCount = state.stakes.filter(stake => !isMatured(stake)).length;
+  const maturedCount = state.stakes.length - activeCount;
+  const visibleStakes = state.stakes.filter(stake => filter === 'all' || (filter === 'matured' ? isMatured(stake) : !isMatured(stake)));
+  const totalHex = state.stakes.reduce((total, stake) => total + stake.stakedHex, 0);
+  const totalValue = state.stakes.reduce((total, stake) => total + (stake.price === null ? 0 : stake.stakedHex * stake.price), 0);
+  const hasPricedStake = state.stakes.some(stake => stake.price !== null);
+  const dateLabel = (day: number) => new Date(HEX_LAUNCH_MS + day * 86_400_000).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  return <section className={`hex-stakes-panel ${open ? 'open' : ''}`}>
+    <button className="hex-stakes-fold" type="button" onClick={onToggle} aria-expanded={open}>
+      <span className="hex-stakes-title"><i className="hex-stakes-orbit"><img src={CORE_ICONS.HEX} alt="HEX logo"/></i><span><small>STAKE MATURITY</small><b>HEX Stakes</b></span></span><ChevronDown size={17}/>
+    </button>
+    {open && <div className="hex-stakes-body">
+      <div className="hex-stakes-scope"><span><b>All wallets</b><small>{walletCount} {walletCount === 1 ? 'address' : 'addresses'} · {networkLabel(state.network)}</small></span><button type="button" className={state.loading ? 'loading' : ''} onClick={onRefresh} disabled={state.loading} aria-label="Refresh HEX stakes"><RefreshCw size={15}/>{state.loading ? 'Reading' : 'Refresh'}</button></div>
+      {state.loading && state.stakes.length === 0 ? <div className="hex-stakes-empty"><RefreshCw size={18} className="spin-icon"/>Reading live HEX stake contracts…</div> : <>
+        <div className="hex-stakes-summary"><div><small>STAKED PRINCIPAL</small><strong>{privateMode ? '••••' : compactAmount(String(totalHex), 2)} <em>HEX</em></strong></div><div><small>CURRENT VALUE</small><strong>{privateMode ? '••••' : hasPricedStake ? money(totalValue) : 'Price unavailable'}</strong></div></div>
+        <div className="hex-stakes-filters" role="group" aria-label="Filter HEX stakes">{([['all', `All ${state.stakes.length}`], ['active', `Active ${activeCount}`], ['matured', `Matured ${maturedCount}`]] as const).map(([id, label]) => <button key={id} type="button" className={filter === id ? 'active' : ''} aria-pressed={filter === id} onClick={() => onFilter(id)}>{label}</button>)}</div>
+        {state.error && <div className="hex-stakes-warning">{state.error}</div>}
+        {visibleStakes.length > 0 ? <div className="hex-stakes-list">{visibleStakes.map(stake => {
+          const matured = isMatured(stake);
+          const daysRemaining = Math.max(stake.endDay - stake.currentDay, 0);
+          const progress = Math.max(0, Math.min(100, ((stake.currentDay - stake.lockedDay) / Math.max(stake.stakedDays, 1)) * 100));
+          const symbol = stake.network === 'PulseChain' ? 'pHEX' : 'HEX';
+          return <article className={`hex-stake-card ${matured ? 'matured' : ''}`} key={stake.id}>
+            <div className="hex-stake-card-head"><span><img src={CORE_ICONS[tokenKey(symbol)]} alt={`${symbol} logo`}/><span><small>{stake.walletLabel} · {stake.network}</small><b>{privateMode ? '••••' : compactAmount(String(stake.stakedHex), 2)} {symbol}</b></span></span><em>{matured ? 'Matured / ready' : `${daysRemaining.toLocaleString()} days left`}</em></div>
+            <div className="hex-stake-value"><span><small>{matured ? 'Term reached' : 'Matures'}</small><b>{dateLabel(stake.endDay)}</b></span><span><small>Principal at current price</small><b>{privateMode ? '••••' : stake.price === null ? 'Price unavailable' : money(stake.stakedHex * stake.price)}</b></span></div>
+            <div className="hex-stake-progress"><i style={{ width: `${progress}%` }}/></div>
+            <div className="hex-stake-meta"><span>Stake #{stake.stakeId}</span><span>{stake.stakedDays.toLocaleString()} day term</span>{stake.unlockedDay > 0 && <span>Good accounted</span>}</div>
+          </article>;
+        })}</div> : <div className="hex-stakes-empty">{state.stakes.length ? `No ${filter} stakes in this view.` : `No open or matured HEX stakes found across ${walletCount} ${walletCount === 1 ? 'address' : 'addresses'} on ${networkLabel(state.network)}.`}</div>}
+        <p className="hex-stakes-note"><LockKeyhole size={12}/>Watch-only contract data. Values use staked principal at today’s HEX price and do not estimate final yield. Fully ended stakes are removed from the live HEX stake list.</p>
+      </>}
+    </div>}
+  </section>;
+}
+
 function App() {
   const [wallets, setWallets] = useState<TrackedWallet[]>(readWallets);
   const [walletGroups, setWalletGroups] = useState<WalletGroup[]>(readGroups);
@@ -678,6 +768,10 @@ function App() {
   const [trackedCollapsed, setTrackedCollapsed] = useState(true);
   const [newWalletPanelOpen, setNewWalletPanelOpen] = useState(false);
   const [allocationOpen, setAllocationOpen] = useState(true);
+  const [hexStakesOpen, setHexStakesOpen] = useState(true);
+  const [hexStakeFilter, setHexStakeFilter] = useState<'all' | 'active' | 'matured'>('all');
+  const [hexStakeRefresh, setHexStakeRefresh] = useState(0);
+  const [hexStakeState, setHexStakeState] = useState<HexStakeState>({ stakes: [], loading: false, error: '', refreshedAt: null, network: readNetwork() });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>(null);
   const [settingsTransparency, setSettingsTransparency] = useState(readSettingsTransparency);
@@ -706,6 +800,7 @@ function App() {
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<any>(null);
   const portfolioRequestRef = useRef<Record<string, Network>>({});
+  const walletStakeKey = wallets.map(wallet => `${wallet.id}:${wallet.address.toLowerCase()}:${wallet.label}`).join('|');
 
   useEffect(() => localStorage.setItem(STORAGE_KEY, JSON.stringify(wallets)), [wallets]);
   useEffect(() => localStorage.setItem(GROUP_STORAGE_KEY, JSON.stringify(walletGroups)), [walletGroups]);
@@ -715,6 +810,27 @@ function App() {
   useEffect(() => { if (!wallets.some(wallet => wallet.id === selectedId)) setSelectedId(wallets[0]?.id ?? ''); }, [wallets, selectedId]);
   useEffect(() => setShowAllAssets(false), [selectedId]);
   useEffect(() => { setChartOpen(false); setChartPeriod('24H'); setChartData([]); setChartPercentage(0); setChartLoading(false); }, [selectedToken]);
+
+  useEffect(() => {
+    if (!hexStakesOpen) return;
+    if (!wallets.length) {
+      setHexStakeState({ stakes: [], loading: false, error: '', refreshedAt: null, network });
+      return;
+    }
+    let cancelled = false;
+    setHexStakeState(current => ({ ...current, stakes: current.network === network ? current.stakes : [], loading: true, error: '', network }));
+    void readHexStakes(wallets, network).then(result => {
+      if (cancelled) return;
+      const errorMessage = result.failed.length === 0 ? '' : result.failed.length === (network === 'Both' ? 2 : 1)
+        ? 'HEX stake data is temporarily unavailable from the selected network.'
+        : `${result.failed.join(' and ')} stake data is temporarily unavailable.`;
+      setHexStakeState({ stakes: result.stakes, loading: false, error: errorMessage, refreshedAt: Date.now(), network });
+    }).catch(() => {
+      if (cancelled) return;
+      setHexStakeState(current => ({ ...current, loading: false, error: 'HEX stake data is temporarily unavailable. Tap refresh to try again.', network }));
+    });
+    return () => { cancelled = true; };
+  }, [walletStakeKey, network, hexStakesOpen, hexStakeRefresh]);
 
   useEffect(() => {
     if (!selectedToken || !TOKEN_DATA[selectedToken]) return;
@@ -1065,6 +1181,8 @@ function App() {
           </div>}
         </div>}
       </section><div className={`new-wallet-panel ${newWalletPanelOpen ? 'open' : ''}`}><div className="new-wallet-glow"/><button className="new-wallet-fold" onClick={() => setNewWalletPanelOpen(value => !value)} aria-expanded={newWalletPanelOpen}><span className="new-wallet-title"><i className="wallet-orbit"><FolderPlus size={20}/></i><span><small>{ui.organize}</small><b>{ui.createAnother}</b></span></span><ChevronDown size={17}/></button>{newWalletPanelOpen && <div className="new-wallet-body"><p className="panel-note">Create a separate wallet for personal addresses, whales, or any watchlist you choose.</p><div className="created-wallets"><p>{ui.createdWallets}</p>{walletGroups.map(group => { const addressCount = wallets.filter(wallet => (wallet.groupId ?? DEFAULT_GROUP_ID) === group.id).length; const confirming = pendingDeleteGroupId === group.id; return <article className={`created-wallet-row ${confirming ? 'confirming' : ''}`} key={group.id}><div className="created-wallet-summary"><span><b>{group.name}</b><small>{addressCount} {addressCount === 1 ? ui.address : ui.addresses}</small></span>{group.id === DEFAULT_GROUP_ID ? <em>Default</em> : <button type="button" className="wallet-delete-trigger" onClick={() => setPendingDeleteGroupId(group.id)} aria-label={`Delete ${group.name}`}><Trash2 size={15}/>Delete</button>}</div>{confirming && <div className="wallet-delete-warning" role="alertdialog" aria-label={`Confirm deletion of ${group.name}`}><b>Are you sure you want to delete this wallet?</b><small>{addressCount ? `This removes ${addressCount} saved ${addressCount === 1 ? 'address' : 'addresses'} from this device.` : 'This wallet is empty and will be removed from this device.'}</small><div><button type="button" onClick={() => setPendingDeleteGroupId(null)}>Cancel</button><button type="button" className="confirm-delete" onClick={() => deleteGroup(group.id)}>Delete wallet</button></div></div>}</article>; })}</div><div className="group-creator"><FolderPlus size={15}/><input aria-label="New wallet group name" value={newGroupName} onChange={event => setNewGroupName(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addGroup(); } }} placeholder="Name a new wallet, e.g. Whales"/><button onClick={addGroup} disabled={!newGroupName.trim()}>Create wallet</button></div></div>}</div><section className={`allocation-panel ${allocationOpen ? 'open' : ''}`}><button className="allocation-fold" type="button" onClick={() => setAllocationOpen(value => !value)} aria-expanded={allocationOpen}><span className="allocation-title"><i className="wallet-orbit"><ChartPie size={20}/></i><span><small>{ui.allocationEyebrow}</small><b>{ui.allocation}</b></span></span><ChevronDown size={17}/></button>{allocationOpen && <div className="allocation-body"><div className="allocation-scope"><span><b>All wallets</b><small>{wallets.length} {wallets.length === 1 ? ui.address : ui.addresses} · {networkLabel(network)}</small></span><div className="allocation-network-switch" role="group" aria-label="Allocation network">{(['Ethereum', 'PulseChain', 'Both'] as Network[]).map(option => <button type="button" key={option} className={network === option ? 'active' : ''} aria-pressed={network === option} onClick={() => chooseNetwork(option)}>{option}</button>)}</div></div>{networkLoading ? <div className="allocation-empty"><RefreshCw size={18} className="spin-icon"/>Reading all wallet allocations…</div> : allocationItems.length && allocationTotal > 0 ? <div className="allocation-content"><div className="allocation-donut" style={{ background: allocationGradient }}><span><b>All wallets</b><small>{privateMode ? '••••' : money(allocationTotal)}</small><em>{wallets.length} {wallets.length === 1 ? ui.address : ui.addresses}</em></span></div><div className="allocation-legend">{allocationItems.map((item, index) => <div className="allocation-item" key={`${item.symbol}-${index}`} style={{ '--allocation-color': item.color } as React.CSSProperties}><i>{item.icon ? <img src={item.icon} alt={`${item.symbol} logo`} onError={event => { event.currentTarget.style.display = 'none'; }}/> : <span/>}</i><span className="allocation-color-swatch"/><b>{item.symbol}</b><strong>{`${((item.value / allocationTotal) * 100).toFixed(1)}%`}</strong></div>)}</div></div> : <div className="allocation-empty">{ui.noAllocation}</div>}</div>}</section></>}
+
+      {wallets.length > 0 && <HexStakesPanel state={hexStakeState} open={hexStakesOpen} filter={hexStakeFilter} walletCount={wallets.length} privateMode={privateMode} onToggle={() => setHexStakesOpen(value => !value)} onFilter={setHexStakeFilter} onRefresh={() => setHexStakeRefresh(value => value + 1)}/>}
 
       {wallets.length === 0 && <section className="next-preview"><p className="eyebrow">WHAT COMES NEXT</p><h2>Your wallet becomes a living dashboard.</h2><div className="preview-panels"><div/><div/><div/></div><p>Token panels inspired by your reference design will appear here after we connect live portfolio data.</p></section>}
     </main>
