@@ -103,4 +103,21 @@
 
 @media(max-width:560px){.hex-stakes-network-switch button{height:40px;font-size:8px}.hex-stakes-summary{grid-template-columns:1fr}.hex-stakes-summary strong{font-size:18px}.hex-address-list article{grid-template-columns:minmax(0,1fr);gap:5px}.hex-address-list article>small{white-space:normal}.hex-address-list code{font-size:8px}.hex-ended-history article{grid-template-columns:28px minmax(0,1fr) auto}.hex-ended-history article>img{width:28px;height:28px}}
 
-.settings-panel{opacity:1;background:linear-gradient(145deg,rgba(15,9,18,var(--settings-opacity,.77)),rgba(5,3,8,var(--settings-opacity,.77))) padding-box,linear-gradient(135deg,#ff2ca8,#8c38ff 62%,#14d9ff) border-box;backdrop-filter:blur(12px) saturate(125%);-webkit-backdrop-filter:blur(12px) saturate(125%)}
+/* User-selectable panel accents preserve the original design until customized. */
+.address-panel{background:linear-gradient(145deg,rgba(15,9,18,.78),rgba(5,3,8,.58)) padding-box,var(--address-panel-border,linear-gradient(135deg,#00c8f0,#7238ff 37%,#ff2ca8 72%,#ff9d00)) border-box}
+.tracked-panel{background:linear-gradient(145deg,rgba(15,9,18,.76),rgba(5,3,8,.56)) padding-box,var(--tracked-panel-border,linear-gradient(118deg,#ff2ca8 0%,#ff3f68 24%,#ff7a18 48%,#ffd229 66%,#fa3ba9 84%,#8c38ff 100%)) border-box}
+.new-wallet-panel{background:linear-gradient(145deg,rgba(13,9,17,.74),rgba(5,3,8,.55)) padding-box,var(--new-wallet-border,linear-gradient(135deg,#11d7b4,#14c9ef 34%,#7038ff 68%,#f52ca7)) border-box}
+.allocation-panel{background:linear-gradient(145deg,rgba(13,9,17,.78),rgba(5,3,8,.58)) padding-box,var(--allocation-border,linear-gradient(135deg,#ff2ca8,#8c38ff 55%,#14d9ff)) border-box}
+.hex-stakes-panel{background:radial-gradient(circle at 8% 8%,#ff2ca822,transparent 28%),radial-gradient(circle at 92% 15%,#14d9ff18,transparent 34%),linear-gradient(145deg,rgba(14,7,18,.88),rgba(5,3,9,.68)) padding-box,var(--hex-stakes-border,linear-gradient(118deg,#ff2ca8 0%,#ff3f68 24%,#ff7a18 48%,#ffd229 66%,#fa3ba9 84%,#8c38ff 100%)) border-box}
+.hex-calculator-panel{background:radial-gradient(circle at 8% 8%,#00ed9423,transparent 30%),radial-gradient(circle at 92% 12%,#14d9ff20,transparent 34%),linear-gradient(145deg,rgba(5,18,18,.9),rgba(3,6,10,.72)) padding-box,var(--hex-calculator-border,linear-gradient(125deg,#00ed94,#14d9ff 48%,#4778ff 78%,#8c38ff)) border-box}
+
+.mini-wallet.selected{border-color:#32e2aa!important;background:linear-gradient(145deg,#10211c,#080d0b)!important;box-shadow:inset 0 0 26px #20e7a51d,0 0 15px #20e7a53d!important}
+.mini-wallet.selected:after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;box-shadow:inset 0 0 0 1px #60f2c580}
+
+.sound-options button.enabled-option.active{border-color:#32e2aa!important;background:linear-gradient(135deg,#11c98d25,#0bd5b019)!important;box-shadow:inset 0 1px #ffffff15,0 0 20px #20e7a53c!important}
+.sound-options button.enabled-option.active>i{color:#67f4c4}
+.sound-options button.disabled-option.active{border-color:#ffffff25;background:#ffffff08;box-shadow:inset 0 1px #ffffff0d}
+
+.panel-customizer{margin-top:22px;padding-top:18px;border-top:1px solid #ffffff10}.panel-customizer .settings-subheading{margin-bottom:12px}.panel-targets{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.panel-targets button,.panel-default-theme,.reset-panel-themes{min-height:38px;border:1px solid #ffffff11;border-radius:9px;background:#ffffff05;color:#918795;font-size:9px;font-weight:700;cursor:pointer}.panel-targets button.active,.panel-default-theme.active{border-color:#50e5b868;background:#19d89b17;color:#8cf5d1;box-shadow:0 0 13px #1dde9f1f}.palette-label{display:block;margin:17px 1px 8px;color:#746b79;font:700 8px 'Space Grotesk';letter-spacing:1.2px}.panel-default-theme{width:100%}.panel-theme-grid{display:grid;gap:8px}.panel-theme-grid.colors{grid-template-columns:repeat(5,1fr)}.panel-theme-grid.gradients{grid-template-columns:repeat(2,1fr)}.panel-theme-swatch{height:38px;border:2px solid transparent;border-radius:10px;cursor:pointer;box-shadow:inset 0 1px #ffffff36,0 5px 12px #0008}.panel-theme-swatch.active{border-color:#fff;box-shadow:0 0 0 2px #39e6b86b,0 0 18px #2fe2ad4d}.reset-panel-themes{width:100%;margin-top:18px;color:#a69ca9}
+
+@media(max-width:560px){.panel-targets{grid-template-columns:repeat(2,minmax(0,1fr))}.panel-targets button{padding:5px;font-size:8px}.panel-theme-swatch{height:35px}}
