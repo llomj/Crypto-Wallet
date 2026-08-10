@@ -1,13 +1,13 @@
 import React, { FormEvent, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowLeft, ArrowRight, ArrowUpRight, Calculator, ChartPie, ChevronDown, Copy, Eye, EyeOff, FolderPlus, Languages, LockKeyhole, Network as NetworkIcon, Radio, RefreshCw, ScanSearch, Settings, ShieldCheck, SlidersHorizontal, Trash2, Volume2, VolumeX, WalletCards, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ArrowUpRight, Calculator, ChartPie, ChevronDown, Copy, Eye, EyeOff, FolderPlus, Info, Languages, LockKeyhole, Network as NetworkIcon, Radio, RefreshCw, ScanSearch, Settings, ShieldCheck, SlidersHorizontal, Trash2, Vibrate, Volume2, VolumeX, WalletCards, X } from 'lucide-react';
 import { createChart, IChartApi, ISeriesApi, LineStyle, LineSeries } from 'lightweight-charts';
 import './styles.css';
 
 type ChainNetwork = 'PulseChain' | 'Ethereum';
 type Network = ChainNetwork | 'Both';
 type Language = 'en' | 'fr' | 'es' | 'nl';
-type SettingsSection = 'language' | 'network' | 'customize' | 'sound' | null;
+type SettingsSection = 'language' | 'network' | 'customize' | 'sound' | 'info' | null;
 type TrackedWallet = { id: string; label: string; address: string; network: Network; groupId?: string };
 type WalletGroup = { id: string; name: string };
 type Asset = { id: string; symbol: string; name: string; amount: string; price: number | null; value: number | null; icon: string | null; network: ChainNetwork; native?: boolean; decimals?: number };
@@ -34,6 +34,7 @@ const NETWORK_STORAGE_KEY = 'pulse-vault-active-network-v1';
 const LANGUAGE_STORAGE_KEY = 'pulse-vault-language-v1';
 const SETTINGS_TRANSPARENCY_STORAGE_KEY = 'pulse-vault-settings-transparency-v1';
 const SOUND_STORAGE_KEY = 'pulse-vault-panel-sound-v1';
+const HAPTIC_STORAGE_KEY = 'pulse-vault-panel-haptic-v1';
 const DEFAULT_GROUP_ID = 'my-wallet';
 const ALLOCATION_COLORS: Record<string, string> = { ETH: '#7868f2', WETH: '#627eea', PLS: '#35d8f2', WPLS: '#35d8f2', HEX: '#ff2ca8', PHEX: '#ff9d00', PLSX: '#00ed94', PRVX: '#a84cff', INC: '#00e6a8', HDRN: '#18c8ff', ICSA: '#f5b942', PDI: '#df48ff', PDA: '#ff8c42', ASIC: '#ffcf40', USDC: '#2775ca' };
 const ALLOCATION_FALLBACK_COLORS = ['#ff2ca8', '#8c38ff', '#14d9ff', '#00e6a8', '#ff9d00', '#f85f73'];
@@ -91,6 +92,7 @@ const CORE_ICONS: Record<string, string> = {
   WPLS: `${import.meta.env.BASE_URL}token-icons/pls.png`,
   PLSX: `${import.meta.env.BASE_URL}token-icons/plsx.png`,
   HEX: `${import.meta.env.BASE_URL}token-icons/hex.png`,
+  CHEX: `${import.meta.env.BASE_URL}token-icons/hex.png`,
   INC: `${import.meta.env.BASE_URL}token-icons/inc.png`,
   PHEX: `${import.meta.env.BASE_URL}token-icons/phex.png`,
   USDC: `${import.meta.env.BASE_URL}token-icons/usdc.png`,
@@ -177,6 +179,15 @@ const TOKEN_DATA: Record<string, TokenInfo> = {
     color: '#FF1493',
     borderGradient: 'linear-gradient(90deg, #FF1493, #FF6B35, #FFD700)',
   },
+  cHEX: {
+    symbol: 'cHEX',
+    name: 'Combined HEX',
+    subtitle: 'Ethereum HEX + PulseChain pHEX',
+    contract: '0x2B591e99afE9f32eAA6214f7B7629768c40Eeb39',
+    network: 'Both',
+    color: '#D73CFF',
+    borderGradient: 'linear-gradient(90deg, #FF1493, #FF9D00 36%, #8B5CF6 68%, #14D9FF)',
+  },
 };
 
 function readWallets(): TrackedWallet[] {
@@ -221,6 +232,16 @@ function readSoundEnabled() {
   catch { return false; }
 }
 
+function readHapticEnabled() {
+  try { return localStorage.getItem(HAPTIC_STORAGE_KEY) === 'true'; }
+  catch { return false; }
+}
+
+function triggerHaptic() {
+  try { navigator.vibrate?.(18); }
+  catch { /* Haptics are best-effort and browser controlled. */ }
+}
+
 function playPanelChime() {
   try {
     const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -231,7 +252,7 @@ function playPanelChime() {
     const second = context.createOscillator();
     const now = context.currentTime;
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.055, now + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.18, now + 0.012);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
     first.type = 'sine';
     first.frequency.setValueAtTime(620, now);
@@ -677,6 +698,39 @@ async function fetchTokenStats(token: TokenInfo): Promise<TokenStats> {
   }
 }
 
+function parseCompactMetric(value: string) {
+  const match = value.trim().match(/^([\d,.]+)\s*([KMBT])?$/i);
+  if (!match) return 0;
+  const multipliers: Record<string, number> = { K: 1e3, M: 1e6, B: 1e9, T: 1e12 };
+  return Number(match[1].replace(/,/g, '')) * (multipliers[(match[2] || '').toUpperCase()] || 1);
+}
+
+async function fetchCombinedHexStats(): Promise<TokenStats> {
+  const [ethereumHex, pulseHex] = await Promise.all([fetchTokenStats(TOKEN_DATA.HEX), fetchTokenStats(TOKEN_DATA.pHEX)]);
+  const combinedPrice = ethereumHex.price + pulseHex.price;
+  const weightedChange = (key: 'change24h' | 'change7d' | 'change30d') => combinedPrice > 0
+    ? (ethereumHex[key] * ethereumHex.price + pulseHex[key] * pulseHex.price) / combinedPrice
+    : 0;
+  const combinedSupply = parseCompactMetric(ethereumHex.supply) + parseCompactMetric(pulseHex.supply);
+  const combinedHolders = parseCompactMetric(ethereumHex.holders) + parseCompactMetric(pulseHex.holders);
+  return {
+    price: combinedPrice,
+    change24h: weightedChange('change24h'),
+    change7d: weightedChange('change7d'),
+    change30d: weightedChange('change30d'),
+    marketCap: ethereumHex.marketCap + pulseHex.marketCap,
+    liquidity: ethereumHex.liquidity + pulseHex.liquidity,
+    supply: combinedSupply > 0 ? compactSupply(String(combinedSupply)) : 'N/A',
+    holders: combinedHolders > 0 ? compactAmount(String(combinedHolders), 1) : 'N/A',
+    loading: false,
+    error: ethereumHex.error && pulseHex.error ? 'Combined HEX data is temporarily unavailable' : '',
+  };
+}
+
+function fetchTokenStatsForSymbol(symbol: string) {
+  return symbol === 'cHEX' ? fetchCombinedHexStats() : fetchTokenStats(TOKEN_DATA[symbol]);
+}
+
 async function fetchDefiLlamaChart(token: TokenInfo, period: string, cutoff: number) {
   if (period === '24H') return [];
   try {
@@ -792,6 +846,38 @@ function fetchChartOHLCV(token: TokenInfo, period: string) {
   });
   chartRequestCache.set(key, request);
   return request;
+}
+
+function fetchCombinedHexChart(period: string) {
+  const key = `Both:combined-hex:${period}`;
+  const cached = chartRequestCache.get(key);
+  if (cached) return cached;
+  const request = Promise.all([fetchChartOHLCV(TOKEN_DATA.HEX, period), fetchChartOHLCV(TOKEN_DATA.pHEX, period)]).then(([ethereum, pulse]) => {
+    if (ethereum.length < 2 || pulse.length < 2) return [];
+    const times = [...new Set([...ethereum.map(point => point.time), ...pulse.map(point => point.time)])].sort((left, right) => left - right);
+    const start = Math.max(ethereum[0].time, pulse[0].time);
+    let ethereumIndex = 0;
+    let pulseIndex = 0;
+    let ethereumPrice: number | null = null;
+    let pulsePrice: number | null = null;
+    return times.flatMap(time => {
+      while (ethereumIndex < ethereum.length && ethereum[ethereumIndex].time <= time) ethereumPrice = ethereum[ethereumIndex++].value;
+      while (pulseIndex < pulse.length && pulse[pulseIndex].time <= time) pulsePrice = pulse[pulseIndex++].value;
+      return time >= start && ethereumPrice !== null && pulsePrice !== null ? [{ time, value: ethereumPrice + pulsePrice }] : [];
+    });
+  }).then(data => {
+    if (data.length < 2) chartRequestCache.delete(key);
+    return data;
+  }).catch(error => {
+    chartRequestCache.delete(key);
+    throw error;
+  });
+  chartRequestCache.set(key, request);
+  return request;
+}
+
+function fetchChartForSymbol(symbol: string, period: string) {
+  return symbol === 'cHEX' ? fetchCombinedHexChart(period) : fetchChartOHLCV(TOKEN_DATA[symbol], period);
 }
 
 function percentFromSeries(data: { time: number; value: number }[]): number {
@@ -930,7 +1016,7 @@ function HexCalculatorPanel({ open, network, metrics, onToggle, onNetwork, onRef
   const days = Math.max(1, Math.min(5555, Math.round(rawDays)));
   const result = calculateHexStake(amountHex, days, metrics);
   const endDate = new Date(Date.now() + days * 86_400_000).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
-  const setPreset = (nextDuration: string, nextUnit: 'months' | 'years') => { setDuration(nextDuration); setUnit(nextUnit); };
+  const formattedAmount = (() => { const [whole, fraction] = amount.split('.'); return `${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}${fraction !== undefined ? `.${fraction}` : ''}`; })();
   return <section className={`hex-calculator-panel ${open ? 'open' : ''}`}>
     <button className="hex-calculator-fold" type="button" onClick={onToggle} aria-expanded={open}>
       <span className="hex-calculator-title"><i><Calculator size={22}/></i><span><small>ON-CHAIN STAKE ESTIMATE</small><b>HEX Calculator</b></span></span><ChevronDown size={17}/>
@@ -938,10 +1024,9 @@ function HexCalculatorPanel({ open, network, metrics, onToggle, onNetwork, onRef
     {open && <div className="hex-calculator-body">
       <div className="hex-calculator-network" role="group" aria-label="HEX calculator network">{(['Ethereum', 'PulseChain'] as ChainNetwork[]).map(option => <button type="button" key={option} className={network === option ? 'active' : ''} aria-pressed={network === option} onClick={() => onNetwork(option)}>{option}</button>)}</div>
       <div className="hex-calculator-fields">
-        <label><span>HEX to stake</span><input inputMode="decimal" value={amount} onChange={event => setAmount(event.target.value.replace(/[^0-9.,]/g, ''))} aria-label="HEX amount to stake"/></label>
+        <label><span>HEX to stake</span><input inputMode="decimal" value={formattedAmount} onChange={event => { const cleaned = event.target.value.replace(/,/g, '').replace(/[^0-9.]/g, ''); const [whole, ...fractions] = cleaned.split('.'); setAmount(`${whole}${fractions.length ? `.${fractions.join('')}` : ''}`); }} aria-label="HEX amount to stake"/></label>
         <label><span>Stake length</span><div><input inputMode="decimal" value={duration} onChange={event => setDuration(event.target.value.replace(/[^0-9.]/g, ''))} aria-label="Stake duration"/><select value={unit} onChange={event => setUnit(event.target.value as 'days' | 'months' | 'years')} aria-label="Stake duration unit"><option value="days">Days</option><option value="months">Months</option><option value="years">Years</option></select></div></label>
       </div>
-      <div className="hex-calculator-presets"><button type="button" onClick={() => setPreset('2', 'months')}>2 months</button><button type="button" onClick={() => setPreset('1', 'years')}>1 year</button><button type="button" onClick={() => setPreset('5', 'years')}>5 years</button><button type="button" onClick={() => setPreset('10', 'years')}>10 years</button><button type="button" onClick={() => setPreset('15', 'years')}>15 years</button></div>
       {metrics.loading ? <div className="hex-calculator-status"><RefreshCw size={18} className="spin-icon"/>Reading live HEX share rate and payouts…</div> : metrics.error ? <div className="hex-calculator-status error-message">{metrics.error}<button type="button" onClick={onRefresh}>Try again</button></div> : result ? <>
         <div className="hex-calculator-share"><span><small>HEX FOR 1 BASE T-SHARE</small><strong>{compactAmount(String(metrics.oneTShareHex), 2)} HEX</strong></span><span><small>LIVE SHARE RATE</small><strong>{metrics.shareRate.toLocaleString()}</strong></span></div>
         <div className="hex-calculator-results">
@@ -963,6 +1048,7 @@ function App() {
   const [newGroupName, setNewGroupName] = useState('');
   const [collapsedGroups, setCollapsedGroups] = useState<string[]>([]);
   const [pendingDeleteGroupId, setPendingDeleteGroupId] = useState<string | null>(null);
+  const [pendingDeleteWalletId, setPendingDeleteWalletId] = useState<string | null>(null);
   const [trackedCollapsed, setTrackedCollapsed] = useState(true);
   const [newWalletPanelOpen, setNewWalletPanelOpen] = useState(false);
   const [allocationOpen, setAllocationOpen] = useState(true);
@@ -979,6 +1065,7 @@ function App() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection>(null);
   const [settingsTransparency, setSettingsTransparency] = useState(readSettingsTransparency);
   const [soundEnabled, setSoundEnabled] = useState(readSoundEnabled);
+  const [hapticEnabled, setHapticEnabled] = useState(readHapticEnabled);
   const [language, setLanguage] = useState<Language>(readLanguage);
   const [addressFormOpen, setAddressFormOpen] = useState(false);
   const [label, setLabel] = useState('');
@@ -1012,19 +1099,23 @@ function App() {
   useEffect(() => { localStorage.setItem(LANGUAGE_STORAGE_KEY, language); document.documentElement.lang = language; }, [language]);
   useEffect(() => localStorage.setItem(SETTINGS_TRANSPARENCY_STORAGE_KEY, String(settingsTransparency)), [settingsTransparency]);
   useEffect(() => localStorage.setItem(SOUND_STORAGE_KEY, String(soundEnabled)), [soundEnabled]);
+  useEffect(() => localStorage.setItem(HAPTIC_STORAGE_KEY, String(hapticEnabled)), [hapticEnabled]);
   useEffect(() => { if (!wallets.some(wallet => wallet.id === selectedId)) setSelectedId(wallets[0]?.id ?? ''); }, [wallets, selectedId]);
   useEffect(() => setShowAllAssets(false), [selectedId]);
   useEffect(() => { setChartOpen(false); setChartPeriod('24H'); setChartData([]); setChartPercentage(0); setChartLoading(false); }, [selectedToken]);
 
   useEffect(() => {
-    if (!soundEnabled) return;
+    if (!soundEnabled && !hapticEnabled) return;
     const soundTargets = '.panel-fold,.group-fold,.new-wallet-fold,.allocation-fold,.hex-stakes-fold,.hex-calculator-fold';
     const handlePanelClick = (event: MouseEvent) => {
-      if ((event.target as HTMLElement).closest(soundTargets)) playPanelChime();
+      if ((event.target as HTMLElement).closest(soundTargets)) {
+        if (soundEnabled) playPanelChime();
+        if (hapticEnabled) triggerHaptic();
+      }
     };
     document.addEventListener('click', handlePanelClick);
     return () => document.removeEventListener('click', handlePanelClick);
-  }, [soundEnabled]);
+  }, [soundEnabled, hapticEnabled]);
 
   useEffect(() => {
     if (!hexCalculatorOpen) return;
@@ -1067,10 +1158,9 @@ function App() {
       setChartLoading(false);
       return;
     }
-    const token = TOKEN_DATA[selectedToken];
     let cancelled = false;
     setChartLoading(true);
-    void fetchChartOHLCV(token, chartPeriod).then(data => {
+    void fetchChartForSymbol(selectedToken, chartPeriod).then(data => {
       if (cancelled) return;
       setChartData(data);
       setChartPercentage(data.length >= 2 ? percentFromSeries(data) : fallbackPercentage(tokenStats[selectedToken], chartPeriod));
@@ -1283,8 +1373,8 @@ function App() {
           <div className="hero-title-row"><h1>{ui.hero}<br/><span>{ui.privateView}</span></h1></div>
           <p>{ui.subtitle}</p>
           <div className="trust-row"><span><LockKeyhole size={15}/>{ui.noConnection}</span><span><ShieldCheck size={15}/>{ui.noSeed}</span><span className="trust-live"><Radio size={12}/>Live</span></div>
-          <div className="ecosystem-strip"><span>{ui.builtFor}</span><div>{['ETH', 'PLS', 'HEX', 'pHEX', 'PLSX', 'PRVX', 'INC'].map(sym => (
-            <button key={sym} className={`eco-token-btn ${selectedToken === sym ? 'active' : ''}`} onClick={() => { setSelectedToken(sym); if (!tokenStats[sym]) { setTokenStats(current => ({ ...current, [sym]: { price: 0, change24h: 0, change7d: 0, change30d: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStats(TOKEN_DATA[sym]).then(stats => setTokenStats(current => ({ ...current, [sym]: stats }))); } }}>
+          <div className="ecosystem-strip"><span>{ui.builtFor}</span><div>{['ETH', 'PLS', 'HEX', 'pHEX', 'cHEX', 'PLSX', 'PRVX', 'INC'].map(sym => (
+            <button key={sym} className={`eco-token-btn ${sym === 'cHEX' ? 'combined-hex' : ''} ${selectedToken === sym ? 'active' : ''}`} onClick={() => { setSelectedToken(sym); if (!tokenStats[sym]) { setTokenStats(current => ({ ...current, [sym]: { price: 0, change24h: 0, change7d: 0, change30d: 0, marketCap: 0, liquidity: 0, supply: 'N/A', holders: 'N/A', loading: true, error: '' } })); void fetchTokenStatsForSymbol(sym).then(stats => setTokenStats(current => ({ ...current, [sym]: stats }))); } }}>
               <img src={CORE_ICONS[tokenKey(sym)] || ''} alt={sym} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}/>
               <span>{sym}</span>
             </button>
@@ -1393,7 +1483,8 @@ function App() {
             })}
           </div>
           {!trackedCollapsed && selectedWallet && <div className="asset-panel">
-            <div className="asset-panel-head"><div><p className="eyebrow">{ui.selectedAddress} · {networkLabel(network)}</p><input className="address-name-input" aria-label="Rename selected wallet" value={selectedWallet.label} onChange={event => renameWallet(selectedWallet.id, event.target.value)}/><button onClick={() => copy(selectedWallet.address, selectedWallet.id)}>{privateMode ? '••••••••••••••••' : short(selectedWallet.address)} {copied === selectedWallet.id ? <em>COPIED</em> : <Copy size={13}/>}</button></div><div className="selected-actions"><button className={hideDust ? 'dust-active' : ''} onClick={() => setHideDust(value => !value)}>{hideDust ? `${ui.showDust}${hiddenDustCount ? ` · ${hiddenDustCount} hidden` : ''}` : ui.hideDust}</button>{network !== 'PulseChain' && <a href={`https://etherscan.io/address/${selectedWallet.address}`} target="_blank" rel="noreferrer" aria-label="Open Ethereum explorer">ETH <ArrowUpRight size={15}/></a>}{network !== 'Ethereum' && <a href={`https://scan.pulsechain.com/address/${selectedWallet.address}`} target="_blank" rel="noreferrer" aria-label="Open PulseChain explorer">PLS <ArrowUpRight size={15}/></a>}<button onClick={() => setWallets(wallets.filter(wallet => wallet.id !== selectedWallet.id))} aria-label={`Remove ${selectedWallet.label}`}><Trash2 size={16}/></button></div></div>
+            <div className="asset-panel-head"><div><p className="eyebrow">{ui.selectedAddress} · {networkLabel(network)}</p><input className="address-name-input" aria-label="Rename selected wallet" value={selectedWallet.label} onChange={event => renameWallet(selectedWallet.id, event.target.value)}/><button onClick={() => copy(selectedWallet.address, selectedWallet.id)}>{privateMode ? '••••••••••••••••' : short(selectedWallet.address)} {copied === selectedWallet.id ? <em>COPIED</em> : <Copy size={13}/>}</button></div><div className="selected-actions"><button className={hideDust ? 'dust-active' : ''} onClick={() => setHideDust(value => !value)}>{hideDust ? `${ui.showDust}${hiddenDustCount ? ` · ${hiddenDustCount} hidden` : ''}` : ui.hideDust}</button><a href={`${network === 'Ethereum' ? 'https://etherscan.io/address/' : 'https://scan.pulsechain.com/address/'}${selectedWallet.address}`} target="_blank" rel="noreferrer" aria-label={`Open ${network === 'Ethereum' ? 'Ethereum' : 'PulseChain'} explorer`}>Explorer <ArrowUpRight size={15}/></a><button onClick={() => setPendingDeleteWalletId(selectedWallet.id)} aria-label={`Delete ${selectedWallet.label}`}><Trash2 size={16}/></button></div></div>
+            {pendingDeleteWalletId === selectedWallet.id && <div className="address-delete-warning" role="alertdialog" aria-label={`Confirm deletion of ${selectedWallet.label}`}><span><b>Are you sure you want to delete this address?</b><small>{selectedWallet.label} will be removed from this device. This does not affect the blockchain wallet.</small></span><div><button type="button" onClick={() => setPendingDeleteWalletId(null)}>Cancel</button><button type="button" className="confirm-delete" onClick={() => { setWallets(current => current.filter(wallet => wallet.id !== selectedWallet.id)); setPendingDeleteWalletId(null); }}>Delete address</button></div></div>}
             <div className="asset-list">
               {(!selectedPortfolio || selectedPortfolio.loading) && (selectedPortfolio?.assets.length ?? 0) === 0 && <div className="asset-message"><RefreshCw size={20} className="spin-icon"/>Reading live {networkLabel(network)} assets…</div>}
               {selectedPortfolio?.error && <div className="asset-message error-message">{selectedPortfolio.error}<button onClick={() => refreshWallet(selectedWallet)}>Try again</button></div>}
@@ -1418,21 +1509,23 @@ function App() {
     </main>
     {settingsOpen && <section className="settings-panel" style={{ '--settings-opacity': settingsTransparency / 100 } as React.CSSProperties} aria-label={ui.settings}>
       <div className="settings-head">
-        <div className="settings-head-title">{settingsSection && <button className="settings-back" type="button" onClick={() => setSettingsSection(null)} aria-label="Back to settings"><ArrowLeft size={17}/></button>}<div><p className="eyebrow">{ui.settings.toUpperCase()}</p><h2>{settingsSection === 'language' ? ui.language : settingsSection === 'network' ? 'Network' : settingsSection === 'customize' ? 'Customize' : settingsSection === 'sound' ? 'Sound' : ui.settings}</h2></div></div>
+        <div className="settings-head-title">{settingsSection && <button className="settings-back" type="button" onClick={() => setSettingsSection(null)} aria-label="Back to settings"><ArrowLeft size={17}/></button>}<div><p className="eyebrow">{ui.settings.toUpperCase()}</p><h2>{settingsSection === 'language' ? ui.language : settingsSection === 'network' ? 'Network' : settingsSection === 'customize' ? 'Customize' : settingsSection === 'sound' ? 'Sound & haptics' : settingsSection === 'info' ? 'How to use the app' : ui.settings}</h2></div></div>
         <button type="button" onClick={() => { setSettingsOpen(false); setSettingsSection(null); }} aria-label="Close settings"><X size={18}/></button>
       </div>
       {!settingsSection && <div className="settings-menu">
         <button type="button" onClick={() => setSettingsSection('language')}><i><Languages size={20}/></i><span><b>{ui.language}</b><small>{LANGUAGE_OPTIONS.find(option => option.id === language)?.native}</small></span><ChevronDown size={17}/></button>
         <button type="button" onClick={() => setSettingsSection('network')}><i><NetworkIcon size={20}/></i><span><b>Network</b><small>{networkLabel(network)}</small></span><ChevronDown size={17}/></button>
         <button type="button" onClick={() => setSettingsSection('customize')}><i><SlidersHorizontal size={20}/></i><span><b>Customize</b><small>Panel transparency · {settingsTransparency}%</small></span><ChevronDown size={17}/></button>
-        <button type="button" onClick={() => setSettingsSection('sound')}><i>{soundEnabled ? <Volume2 size={20}/> : <VolumeX size={20}/>}</i><span><b>Sound</b><small>Panel sounds · {soundEnabled ? 'On' : 'Off'}</small></span><ChevronDown size={17}/></button>
+        <button type="button" onClick={() => setSettingsSection('sound')}><i>{soundEnabled ? <Volume2 size={20}/> : <VolumeX size={20}/>}</i><span><b>Sound</b><small>Sound {soundEnabled ? 'on' : 'off'} · Haptics {hapticEnabled ? 'on' : 'off'}</small></span><ChevronDown size={17}/></button>
+        <button type="button" onClick={() => setSettingsSection('info')}><i><Info size={20}/></i><span><b>Info</b><small>Learn what every dashboard panel does</small></span><ChevronDown size={17}/></button>
       </div>}
       {settingsSection === 'language' && <div className="language-options" role="group" aria-label={ui.language}>{LANGUAGE_OPTIONS.map(option => <button type="button" key={option.id} className={language === option.id ? 'active' : ''} aria-pressed={language === option.id} onClick={() => setLanguage(option.id)}><span>{option.native}</span><small>{option.label}</small></button>)}</div>}
       {settingsSection === 'network' && <div className="settings-network-options" role="group" aria-label="Network">{(['Ethereum', 'PulseChain', 'Both'] as Network[]).map(option => <button type="button" key={option} className={network === option ? 'active' : ''} aria-pressed={network === option} onClick={() => chooseNetwork(option)}><i className={option === 'Ethereum' ? 'eth-diamond' : option === 'PulseChain' ? 'pulse-dot' : 'both-network-icon'}>{option === 'Ethereum' ? '◆' : option === 'Both' ? <><span className="pulse-dot"/><span className="eth-diamond">◆</span></> : null}</i><span><b>{option === 'Both' ? 'Both networks' : option}</b><small>{option === 'Ethereum' ? 'ETH · Chain 1' : option === 'PulseChain' ? 'PLS · Chain 369' : 'PulseChain + Ethereum'}</small></span></button>)}</div>}
       {settingsSection === 'customize' && <div className="settings-customize"><div className="transparency-label"><span><b>Panel transparency</b><small>See your portfolio behind Settings</small></span><strong>{settingsTransparency}%</strong></div><input type="range" min="35" max="98" step="1" value={settingsTransparency} onChange={event => setSettingsTransparency(Number(event.target.value))} aria-label="Settings panel transparency"/><div className="transparency-scale"><span>More transparent</span><span>More solid</span></div><div className="transparency-presets">{[{ label: 'Glass', value: 45 }, { label: 'Balanced', value: 77 }, { label: 'Solid', value: 94 }].map(option => <button type="button" key={option.label} className={settingsTransparency === option.value ? 'active' : ''} onClick={() => setSettingsTransparency(option.value)}><span>{option.label}</span><small>{option.value}%</small></button>)}</div></div>}
-      {settingsSection === 'sound' && <div className="settings-network-options sound-options" role="group" aria-label="Panel sound"><button type="button" className={soundEnabled ? 'active' : ''} aria-pressed={soundEnabled} onClick={() => { setSoundEnabled(true); playPanelChime(); }}><i><Volume2 size={20}/></i><span><b>Sound on</b><small>Play a soft chime when a panel opens or closes</small></span></button><button type="button" className={!soundEnabled ? 'active' : ''} aria-pressed={!soundEnabled} onClick={() => setSoundEnabled(false)}><i><VolumeX size={20}/></i><span><b>Sound off</b><small>Keep panel controls silent</small></span></button></div>}
+      {settingsSection === 'sound' && <div className="sound-settings"><div className="settings-subheading"><Volume2 size={16}/><span><b>Panel sound</b><small>A louder cyber chime for panel controls</small></span></div><div className="settings-network-options sound-options" role="group" aria-label="Panel sound"><button type="button" className={soundEnabled ? 'active' : ''} aria-pressed={soundEnabled} onClick={() => { setSoundEnabled(true); playPanelChime(); }}><i><Volume2 size={20}/></i><span><b>Sound on</b><small>Play the chime when panels open or close</small></span></button><button type="button" className={!soundEnabled ? 'active' : ''} aria-pressed={!soundEnabled} onClick={() => setSoundEnabled(false)}><i><VolumeX size={20}/></i><span><b>Sound off</b><small>Keep panel controls silent</small></span></button></div><div className="settings-subheading haptic-heading"><Vibrate size={16}/><span><b>Haptic feedback</b><small>Phone vibration where supported by the browser</small></span></div><div className="settings-network-options sound-options" role="group" aria-label="Panel haptics"><button type="button" className={hapticEnabled ? 'active' : ''} aria-pressed={hapticEnabled} onClick={() => { setHapticEnabled(true); triggerHaptic(); }}><i><Vibrate size={20}/></i><span><b>Haptics on</b><small>Vibrate briefly when a panel is pressed</small></span></button><button type="button" className={!hapticEnabled ? 'active' : ''} aria-pressed={!hapticEnabled} onClick={() => setHapticEnabled(false)}><i><X size={20}/></i><span><b>Haptics off</b><small>Disable vibration feedback</small></span></button></div></div>}
+      {settingsSection === 'info' && <div className="settings-info"><p>This is a watch-only portfolio. It never requests a seed phrase and cannot move your cryptocurrency.</p><article><b>Cryptocurrency logo row</b><span>Press ETH, PLS, HEX, pHEX, cHEX, PLSX, PRVX, or INC to open its live market panel. Choose a time range and press Show Chart to view its price history. cHEX combines Ethereum HEX and PulseChain pHEX market data.</span></article><article><b>Your tracked wallets</b><span>Opens your locally saved watch-only addresses, wallet totals, live assets, dust controls, naming, explorer access, and the protected address-delete flow.</span></article><article><b>Enter a public address</b><span>Add a public 0x address and choose Ethereum, PulseChain, or both networks. Public addresses remain stored only in this browser.</span></article><article><b>Create another wallet</b><span>Create named groups such as Personal or Whales, then organize multiple tracked addresses inside them.</span></article><article><b>Portfolio allocation</b><span>Combines priced assets from all tracked addresses into a cryptocurrency allocation chart for Ethereum, PulseChain, or both.</span></article><article><b>HEX Stakes</b><span>Reads open, matured, and previously ended HEX stakes directly from the selected blockchain contracts across your tracked addresses.</span></article><article><b>HEX Calculator</b><span>Enter a HEX amount and stake length in days, months, or years. It uses the live share rate and recent on-chain payouts to estimate T-shares and potential return; future returns are not guaranteed.</span></article></div>}
     </section>}
-    <footer><div className="footer-tools"><button className={`settings-button ${settingsOpen ? 'active' : ''}`} type="button" onClick={() => { setSettingsSection(null); setSettingsOpen(value => !value); }} aria-expanded={settingsOpen}><Settings size={15}/>{ui.settings}</button><button className="refresh-button" onClick={refreshApp} aria-label="Refresh PulseVault"><RefreshCw size={14}/>{ui.refresh}</button></div><span>{ui.footer}</span></footer>
+    <footer><div className="footer-tools"><button className={`settings-button ${settingsOpen ? 'active' : ''}`} type="button" onClick={() => { const opening = !settingsOpen; setSettingsSection(null); setSettingsOpen(opening); if (opening) window.scrollTo({ top: 0, left: 0, behavior: 'auto' }); }} aria-expanded={settingsOpen}><Settings size={15}/>{ui.settings}</button><button className="refresh-button" onClick={refreshApp} aria-label="Refresh PulseVault"><RefreshCw size={14}/>{ui.refresh}</button></div><span>{ui.footer}</span></footer>
   </div>;
 }
 
