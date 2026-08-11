@@ -156,10 +156,13 @@ const RPC_URLS: Record<ChainNetwork, string[]> = {
 const GECKO_NETWORK: Record<ChainNetwork, string> = { PulseChain: 'pulsechain', Ethereum: 'eth' };
 const ETH_USD_FEED = '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419';
 const HEX_LAUNCH_MS = Date.UTC(2019, 11, 3);
+const PULSECHAIN_LAUNCH_MS = Date.UTC(2023, 4, 13);
 const HEX_STAKE_SELECTORS = { currentDay: '0x5c9302c9', stakeCount: '0x33060d90', stakeLists: '0x2607443b' } as const;
 const HEX_CALCULATOR_SELECTORS = { globals: '0xc3124525', dailyDataRange: '0x6a210a0e' } as const;
 const HEX_STAKE_END_TOPIC = '0x72d9c5a7ab13846e08d9c838f9e866a1bb4a66a2fd3ba3c9e7da3cf9e394dfd7';
 const chartRequestCache = new Map<string, Promise<{ time: number; value: number }[]>>();
+const CHART_STORAGE_KEY = 'pulse-vault-chart-cache-v1';
+const CHART_STORAGE_TTL_MS = 15 * 60 * 1000;
 let pulseChainStatsSnapshotRequest: Promise<Record<string, any>> | null = null;
 let pulseStakedSupplyRequest: Promise<string | null> | null = null;
 const hexStakedSupplyRequests = new Map<ChainNetwork, Promise<string | null>>();
@@ -1129,18 +1132,7 @@ async function fetchDexPoolChart(token: TokenInfo, period: string, cutoff: numbe
   return [];
 }
 
-async function fetchChartOHLCVUncached(token: TokenInfo, period: string): Promise<{ time: number; value: number }[]> {
-  const now = Math.floor(Date.now() / 1000);
-  const periodSeconds: Record<string, number> = { '24H': 86400, '7D': 604800, '30D': 2592000, '3M': 7776000, '6M': 15552000, '1Y': 31536000, 'ATL': 315360000, 'All': 315360000 };
-  const cutoff = now - (periodSeconds[period] || 2592000);
-
-  // Long ranges use contract-address history first; short ranges use pool-swap OHLCV.
-  const broadHistory = await fetchDefiLlamaChart(token, period, cutoff);
-  if (broadHistory.length >= 2) return broadHistory;
-  const dexHistory = await fetchDexPoolChart(token, period, cutoff);
-  if (dexHistory.length >= 2) return dexHistory;
-
-  // Final fallback for listed coins. Public access is intentionally capped at one year.
+async function fetchCoinGeckoChart(token: TokenInfo, period: string) {
   try {
     const coinGeckoIds: Record<string, string> = {
       ETH: 'ethereum', PLS: 'pulsechain', HEX: 'hex', pHEX: 'hex', PLSX: 'pulsex', PRVX: 'provex', INC: 'incentive',
@@ -1152,19 +1144,71 @@ async function fetchChartOHLCVUncached(token: TokenInfo, period: string): Promis
     const data = await jsonRequest(`https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=usd&days=${days}`, 15000);
     if (!data?.prices) return [];
     return data.prices
-      .map((p: any) => ({ time: Math.floor(p[0] / 1000), value: Number(p[1]) }))
-      .filter((d: { time: number; value: number }) => d.value > 0);
+      .map((point: any) => ({ time: Math.floor(point[0] / 1000), value: Number(point[1]) }))
+      .filter((point: { time: number; value: number }) => point.value > 0);
   } catch {
     return [];
   }
+}
+
+function requireChartSeries(request: Promise<{ time: number; value: number }[]>) {
+  return request.then(data => {
+    if (data.length < 2) throw new Error('Chart source returned no verified history');
+    return data;
+  });
+}
+
+async function fetchChartOHLCVUncached(token: TokenInfo, period: string): Promise<{ time: number; value: number }[]> {
+  const now = Math.floor(Date.now() / 1000);
+  const periodSeconds: Record<string, number> = { '24H': 86400, '7D': 604800, '30D': 2592000, '3M': 7776000, '6M': 15552000, '1Y': 31536000, 'ATL': 315360000, 'All': 315360000 };
+  const cutoff = now - (periodSeconds[period] || 2592000);
+
+  // Query independent public market sources together so a slow fallback cannot
+  // hold the chart open for another full network timeout.
+  try {
+    return await Promise.any([
+      requireChartSeries(fetchDefiLlamaChart(token, period, cutoff)),
+      requireChartSeries(fetchDexPoolChart(token, period, cutoff)),
+      requireChartSeries(fetchCoinGeckoChart(token, period)),
+    ]);
+  } catch {
+    return [];
+  }
+}
+
+function readStoredChart(key: string) {
+  try {
+    const stored = JSON.parse(localStorage.getItem(CHART_STORAGE_KEY) || '{}');
+    const entry = stored[key];
+    if (!entry || Date.now() - Number(entry.savedAt) > CHART_STORAGE_TTL_MS || !Array.isArray(entry.data) || entry.data.length < 2) return null;
+    return entry.data as { time: number; value: number }[];
+  } catch {
+    return null;
+  }
+}
+
+function storeChart(key: string, data: { time: number; value: number }[]) {
+  if (data.length < 2) return;
+  try {
+    const stored = JSON.parse(localStorage.getItem(CHART_STORAGE_KEY) || '{}');
+    stored[key] = { savedAt: Date.now(), data };
+    localStorage.setItem(CHART_STORAGE_KEY, JSON.stringify(stored));
+  } catch { /* Chart caching is an optional performance enhancement. */ }
 }
 
 function fetchChartOHLCV(token: TokenInfo, period: string) {
   const key = `${token.network}:${token.contract.toLowerCase()}:${period}`;
   const cached = chartRequestCache.get(key);
   if (cached) return cached;
+  const stored = readStoredChart(key);
+  if (stored) {
+    const request = Promise.resolve(stored);
+    chartRequestCache.set(key, request);
+    return request;
+  }
   const request = fetchChartOHLCVUncached(token, period).then(data => {
     if (data.length < 2) chartRequestCache.delete(key);
+    else storeChart(key, data);
     return data;
   }).catch(error => {
     chartRequestCache.delete(key);
@@ -2037,7 +2081,7 @@ function App() {
                   </div>
                   <div>
                     <h3>{selectedToken}</h3>
-                    <div className="token-subtitle-row"><p>{TOKEN_DATA[selectedToken].subtitle}</p></div>
+                    <div className="token-subtitle-row"><p>{selectedToken === 'PLS' ? `Day ${Math.max(1, Math.floor((Date.now() - PULSECHAIN_LAUNCH_MS) / 86_400_000) + 1).toLocaleString()}` : TOKEN_DATA[selectedToken].subtitle}</p></div>
                   </div>
                 </div>
                 <div className="token-panel-price">
