@@ -39,6 +39,8 @@ const SETTINGS_TRANSPARENCY_STORAGE_KEY = 'pulse-vault-settings-transparency-v1'
 const SOUND_STORAGE_KEY = 'pulse-vault-panel-sound-v1';
 const HAPTIC_STORAGE_KEY = 'pulse-vault-panel-haptic-v1';
 const PANEL_THEMES_STORAGE_KEY = 'pulse-vault-panel-themes-v1';
+const PORTFOLIO_CACHE_KEY = 'pulse-vault-last-portfolios-v1';
+const SWAP_PRICE_CACHE_KEY = 'pulse-vault-last-swap-prices-v1';
 const DEFAULT_GROUP_ID = 'my-wallet';
 const PANEL_OPTIONS: { id: CustomPanel; label: string; cssVariable: string }[] = [
   { id: 'tracked', label: 'Tracked wallets', cssVariable: '--tracked-panel-border' },
@@ -80,7 +82,7 @@ const UI_COPY = {
   es: { hero: '', privateView: 'Cartera privada.', subtitle: 'Sigue tus carteras de PulseChain y Ethereum desde un panel móvil de solo lectura.', noConnection: 'Sin conexión de cartera', noSeed: 'Sin frase semilla', builtFor: 'CREADO PARA EL ECOSISTEMA', addAddress: 'AÑADIR UNA DIRECCIÓN', enterAddress: 'Introduce una dirección pública', privateWatchlist: 'LISTA PRIVADA', trackedWallets: 'Tus carteras seguidas', reveal: 'Mostrar', hide: 'Ocultar', totalPortfolio: 'CARTERA TOTAL', syncing: 'Sincronizando…', syncAll: 'Sincronizar todo', address: 'dirección', addresses: 'direcciones', showCards: 'Mostrar tarjetas', hideCards: 'Ocultar tarjetas', liveAssets: 'Activos en directo', selectedAddress: 'DIRECCIÓN SELECCIONADA', showDust: 'Mostrar polvo', hideDust: 'Ocultar polvo', organize: 'ORGANIZA TU LISTA', createAnother: 'Crear otra cartera', createdWallets: 'Carteras creadas', allocation: 'Distribución de la cartera', allocationEyebrow: 'MEZCLA DE CRIPTOMONEDAS', noAllocation: 'Todavía no hay activos con precio para esta cartera.', settings: 'Ajustes', language: 'Idioma', refresh: 'Actualizar', footer: 'Seguimiento de cartera de solo lectura' },
   nl: { hero: '', privateView: 'Privé walletportfolio.', subtitle: 'Volg je PulseChain- en Ethereum-wallets in één mobiel, alleen-lezen dashboard.', noConnection: 'Geen walletverbinding', noSeed: 'Geen herstelzin', builtFor: 'GEBOUWD VOOR HET ECOSYSTEEM', addAddress: 'ADRES TOEVOEGEN', enterAddress: 'Voer een openbaar adres in', privateWatchlist: 'PRIVÉVOLGLIJST', trackedWallets: 'Je gevolgde wallets', reveal: 'Tonen', hide: 'Verbergen', totalPortfolio: 'TOTALE PORTFOLIO', syncing: 'Synchroniseren…', syncAll: 'Alles vernieuwen', address: 'adres', addresses: 'adressen', showCards: 'Kaarten tonen', hideCards: 'Kaarten verbergen', liveAssets: 'Live activa', selectedAddress: 'GESELECTEERD ADRES', showDust: 'Dust tonen', hideDust: 'Dust verbergen', organize: 'ORGANISEER JE VOLGLIJST', createAnother: 'Nog een wallet maken', createdWallets: 'Aangemaakte wallets', allocation: 'Portfolioverdeling', allocationEyebrow: 'CRYPTO-MIX', noAllocation: 'Er zijn nog geen activa met prijs beschikbaar voor deze wallet.', settings: 'Instellingen', language: 'Taal', refresh: 'Vernieuwen', footer: 'Alleen-lezen portfolio-inzicht' },
 } as const;
-const FEATURED_SYMBOLS = new Set(['PLS', 'WPLS', 'ETH', 'WETH', 'PLSX', 'HEX', 'pHEX', 'INC', 'PRVX', 'HDRN', 'ICSA', 'PDI', 'ASIC', 'PDA', 'USDC']);
+const FEATURED_SYMBOLS = new Set(['PLS', 'WPLS', 'ETH', 'WETH', 'PLSX', 'HEX', 'pHEX', 'INC', 'PRVX', 'HDRN', 'ICSA', 'PDI', 'ASIC', 'PDA', 'USDC', 'USDT', 'BTC']);
 const HIDDEN_DUST_SYMBOLS = new Set(['FTVC', 'SCIVVE', 'SCIVVI', 'SCIVVII', 'SCIVV', 'HXY']);
 const WRAPPED_NATIVE: Record<ChainNetwork, string> = {
   PulseChain: '0xA1077a294dDe1B09bB078844Df40758a5D0f9a27',
@@ -92,6 +94,8 @@ const VERIFIED_TOKEN_CONTRACTS: Partial<Record<ChainNetwork, Record<string, stri
     WETH: WRAPPED_NATIVE.Ethereum,
     HDRN: '0x3819f64f282bf135d62168C1e513280dAF905e06',
     ICSA: '0xfc4913214444af5c715cc9f7b52655e788a569ed',
+    USDC: '0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+    USDT: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
   },
   PulseChain: {
     HEX: '0x2B591e99afE9f32eAA6214f7B7629768c40Eeb39',
@@ -101,6 +105,11 @@ const VERIFIED_TOKEN_CONTRACTS: Partial<Record<ChainNetwork, Record<string, stri
     INC: '0x2fa878Ab3F87CC1C9737Fc071108F904c0B0C95d',
     HDRN: '0x3819f64f282bf135d62168C1e513280dAF905e06',
     ICSA: '0xfc4913214444af5c715cc9f7b52655e788a569ed',
+    WETH: WRAPPED_NATIVE.Ethereum,
+    ASIC: '0x347a96a5BD06D2E15199b032F46fB724d6c73047',
+    PDI: '0xC50948bac01116F246259070Ea6084C04649efDF',
+    USDC: '0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+    USDT: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
   },
 };
 const RPC_URLS: Record<ChainNetwork, string[]> = {
@@ -129,6 +138,8 @@ const CORE_ICONS: Record<string, string> = {
   INC: `${import.meta.env.BASE_URL}token-icons/inc.png`,
   PHEX: `${import.meta.env.BASE_URL}token-icons/phex.png`,
   USDC: `${import.meta.env.BASE_URL}token-icons/usdc.png`,
+  USDT: `${import.meta.env.BASE_URL}token-icons/usdt.svg`,
+  BTC: `${import.meta.env.BASE_URL}token-icons/btc.svg`,
   WETH: `${import.meta.env.BASE_URL}token-icons/eth.png`,
   HDRN: `${import.meta.env.BASE_URL}token-icons/hdrn.png`,
   ICSA: `${import.meta.env.BASE_URL}token-icons/icsa.png`,
@@ -221,9 +232,38 @@ const TOKEN_DATA: Record<string, TokenInfo> = {
     color: '#D73CFF',
     borderGradient: 'linear-gradient(90deg, #FF1493, #FF9D00 36%, #8B5CF6 68%, #14D9FF)',
   },
+  HDRN_PULSE: { symbol: 'HDRN', name: 'Hedron', subtitle: 'PulseChain', contract: VERIFIED_TOKEN_CONTRACTS.PulseChain!.HDRN, network: 'PulseChain', color: '#18c8ff', borderGradient: 'linear-gradient(90deg,#18c8ff,#725cff)' },
+  HDRN_ETH: { symbol: 'HDRN', name: 'Hedron', subtitle: 'Ethereum', contract: VERIFIED_TOKEN_CONTRACTS.Ethereum!.HDRN, network: 'Ethereum', color: '#18c8ff', borderGradient: 'linear-gradient(90deg,#18c8ff,#725cff)' },
+  ICSA_PULSE: { symbol: 'ICSA', name: 'Icosa', subtitle: 'PulseChain', contract: VERIFIED_TOKEN_CONTRACTS.PulseChain!.ICSA, network: 'PulseChain', color: '#f5b942', borderGradient: 'linear-gradient(90deg,#f5b942,#ff6f91)' },
+  ICSA_ETH: { symbol: 'ICSA', name: 'Icosa', subtitle: 'Ethereum', contract: VERIFIED_TOKEN_CONTRACTS.Ethereum!.ICSA, network: 'Ethereum', color: '#f5b942', borderGradient: 'linear-gradient(90deg,#f5b942,#ff6f91)' },
+  ASIC_PULSE: { symbol: 'ASIC', name: 'Application Specific Internet Coin', subtitle: 'PulseChain', contract: VERIFIED_TOKEN_CONTRACTS.PulseChain!.ASIC, network: 'PulseChain', color: '#ffcf40', borderGradient: 'linear-gradient(90deg,#ffcf40,#ff6b35)' },
+  PDI_PULSE: { symbol: 'PDI', name: 'Pindex', subtitle: 'PulseChain', contract: VERIFIED_TOKEN_CONTRACTS.PulseChain!.PDI, network: 'PulseChain', color: '#df48ff', borderGradient: 'linear-gradient(90deg,#df48ff,#5286ff)' },
 };
-const SWAP_TOKEN_KEYS = ['PLS', 'pHEX', 'PLSX', 'INC', 'PRVX', 'ETH', 'HEX'] as const;
-type SwapTokenKey = typeof SWAP_TOKEN_KEYS[number];
+const SWAP_TOKENS = [
+  { id: 'PLS', symbol: 'PLS', network: 'PulseChain', source: 'PLS' },
+  { id: 'WPLS_PULSE', symbol: 'WPLS', network: 'PulseChain', source: 'PLS' },
+  { id: 'WPLS_ETH', symbol: 'WPLS', network: 'Ethereum', source: 'PLS' },
+  { id: 'PHEX', symbol: 'pHEX', network: 'PulseChain', source: 'pHEX' },
+  { id: 'PLSX', symbol: 'PLSX', network: 'PulseChain', source: 'PLSX' },
+  { id: 'INC', symbol: 'INC', network: 'PulseChain', source: 'INC' },
+  { id: 'PRVX', symbol: 'PRVX', network: 'PulseChain', source: 'PRVX' },
+  { id: 'HDRN_PULSE', symbol: 'HDRN', network: 'PulseChain', source: 'HDRN_PULSE' },
+  { id: 'HDRN_ETH', symbol: 'HDRN', network: 'Ethereum', source: 'HDRN_ETH' },
+  { id: 'ICSA_PULSE', symbol: 'ICSA', network: 'PulseChain', source: 'ICSA_PULSE' },
+  { id: 'ICSA_ETH', symbol: 'ICSA', network: 'Ethereum', source: 'ICSA_ETH' },
+  { id: 'ASIC_PULSE', symbol: 'ASIC', network: 'PulseChain', source: 'ASIC_PULSE' },
+  { id: 'PDI_PULSE', symbol: 'PDI', network: 'PulseChain', source: 'PDI_PULSE' },
+  { id: 'WETH_PULSE', symbol: 'WETH', network: 'PulseChain', source: 'ETH' },
+  { id: 'ETH', symbol: 'ETH', network: 'Ethereum', source: 'ETH' },
+  { id: 'HEX', symbol: 'HEX', network: 'Ethereum', source: 'HEX' },
+  { id: 'USDC_PULSE', symbol: 'USDC', network: 'PulseChain', coinGeckoId: 'usd-coin', fallbackPrice: 1 },
+  { id: 'USDC_ETH', symbol: 'USDC', network: 'Ethereum', coinGeckoId: 'usd-coin', fallbackPrice: 1 },
+  { id: 'USDT_PULSE', symbol: 'USDT', network: 'PulseChain', coinGeckoId: 'tether', fallbackPrice: 1 },
+  { id: 'USDT_ETH', symbol: 'USDT', network: 'Ethereum', coinGeckoId: 'tether', fallbackPrice: 1 },
+  { id: 'BTC', symbol: 'BTC', network: 'Both', coinGeckoId: 'bitcoin' },
+] as const;
+type SwapTokenKey = typeof SWAP_TOKENS[number]['id'];
+type SwapTokenDefinition = typeof SWAP_TOKENS[number];
 
 function readWallets(): TrackedWallet[] {
   try {
@@ -279,6 +319,37 @@ function readPanelThemes(): Partial<Record<CustomPanel, PanelTheme>> {
     const themes = new Set<PanelTheme>(['default', ...Object.keys(PANEL_THEME_GRADIENTS) as Exclude<PanelTheme, 'default'>[]]);
     return Object.fromEntries(Object.entries(saved).filter(([panel, theme]) => panelIds.has(panel as CustomPanel) && themes.has(theme as PanelTheme))) as Partial<Record<CustomPanel, PanelTheme>>;
   } catch { return {}; }
+}
+
+function readPortfolioCache(): Record<string, Portfolio> {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PORTFOLIO_CACHE_KEY) || '{}');
+    return saved && typeof saved === 'object' ? saved : {};
+  } catch { return {}; }
+}
+
+function cachedPortfolio(walletId: string, network: Network) {
+  return readPortfolioCache()[`${walletId}:${network}`];
+}
+
+function savePortfolioCache(walletId: string, portfolio: Portfolio) {
+  try {
+    const cache = readPortfolioCache();
+    cache[`${walletId}:${portfolio.network}`] = portfolio;
+    localStorage.setItem(PORTFOLIO_CACHE_KEY, JSON.stringify(cache));
+  } catch { /* Offline data is best-effort when device storage is unavailable. */ }
+}
+
+function readSwapPriceCache(): Partial<Record<SwapTokenKey, number>> {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SWAP_PRICE_CACHE_KEY) || '{}') as Partial<Record<SwapTokenKey, number>>;
+    return saved && typeof saved === 'object' ? saved : {};
+  } catch { return {}; }
+}
+
+function saveSwapPriceCache(prices: Partial<Record<SwapTokenKey, number>>) {
+  try { localStorage.setItem(SWAP_PRICE_CACHE_KEY, JSON.stringify(prices)); }
+  catch { /* Keep the live quote even if storage is unavailable. */ }
 }
 
 function triggerHaptic() {
@@ -359,6 +430,52 @@ function money(value: number | null) {
   if (value === null || !Number.isFinite(value)) return 'Price unavailable';
   if (value > 0 && value < 0.01) return `$${value.toPrecision(3)}`;
   return `$${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+}
+
+function usdcPlaceholder(network: ChainNetwork): Asset {
+  return {
+    id: `${network}:${VERIFIED_TOKEN_CONTRACTS[network]!.USDC}`, symbol: 'USDC', name: 'USD Coin', amount: '0', price: 1, value: 0,
+    icon: CORE_ICONS.USDC, network, decimals: 6,
+  };
+}
+
+function ensureUsdcAssets(assets: Asset[], network: Network) {
+  const networks: ChainNetwork[] = network === 'Both' ? ['PulseChain', 'Ethereum'] : [network];
+  const next = [...assets];
+  for (const chain of networks) {
+    if (!next.some(asset => asset.network === chain && tokenKey(asset.symbol) === 'USDC')) next.push(usdcPlaceholder(chain));
+  }
+  return next;
+}
+
+const PULSE_LEAGUE_SUPPLY: Record<string, number> = {
+  PLS: 15.4e12,
+  PLSX: 19.6e12,
+  PHEX: 70.5e9,
+  INC: 55.46e6,
+  PRVX: 320.7e9,
+};
+const PULSE_LEAGUES = [
+  { label: 'Poseidon', emoji: '🔱', percent: 10 },
+  { label: 'Whale', emoji: '🐋', percent: 1 },
+  { label: 'Shark', emoji: '🦈', percent: 0.1 },
+  { label: 'Dolphin', emoji: '🐬', percent: 0.01 },
+  { label: 'Squid', emoji: '🦑', percent: 0.001 },
+  { label: 'Turtle', emoji: '🐢', percent: 0.0001 },
+] as const;
+
+function pulseLeagueForAssets(assets: Asset[]) {
+  const holdings = new Map<string, number>();
+  for (const asset of assets) {
+    if (asset.network !== 'PulseChain') continue;
+    let symbol = tokenKey(displayAssetSymbol(asset));
+    if (symbol === 'WPLS') symbol = 'PLS';
+    if (!PULSE_LEAGUE_SUPPLY[symbol]) continue;
+    holdings.set(symbol, (holdings.get(symbol) ?? 0) + Math.max(0, Number(asset.amount) || 0));
+  }
+  const highestPercent = [...holdings].reduce((highest, [symbol, amount]) => Math.max(highest, amount / PULSE_LEAGUE_SUPPLY[symbol] * 100), 0);
+  return PULSE_LEAGUES.find(league => highestPercent >= league.percent)
+    ?? { label: 'Shrimp', emoji: '🦐', percent: 0.000001 } as const;
 }
 async function jsonRequest(url: string, timeout = 16000, attempts = 2): Promise<any> {
   let lastError: unknown;
@@ -632,7 +749,7 @@ async function loadChainPortfolio(address: string, network: ChainNetwork): Promi
 }
 
 async function loadPortfolio(wallet: TrackedWallet): Promise<Asset[]> {
-  if (wallet.network !== 'Both') return loadChainPortfolio(wallet.address, wallet.network);
+  if (wallet.network !== 'Both') return ensureUsdcAssets(await loadChainPortfolio(wallet.address, wallet.network), wallet.network);
   const chainResults = await Promise.allSettled([
     loadChainPortfolio(wallet.address, 'PulseChain'),
     loadChainPortfolio(wallet.address, 'Ethereum'),
@@ -642,7 +759,7 @@ async function loadPortfolio(wallet: TrackedWallet): Promise<Asset[]> {
     ? result.value.map(asset => ({ ...asset, id: `${networks[index]}:${asset.id}` }))
     : []);
   if (!combined.length) throw new Error('Both network portfolio requests failed.');
-  return combined.sort((left, right) => (right.value ?? -1) - (left.value ?? -1));
+  return ensureUsdcAssets(combined.sort((left, right) => (right.value ?? -1) - (left.value ?? -1)), 'Both');
 }
 
 async function fetchPulseStakedSupply() {
@@ -1073,23 +1190,36 @@ function calculateHexStake(amountHex: number, days: number, metrics: HexCalculat
 
 function SwapPanel({ open, onToggle }: { open: boolean; onToggle: () => void }) {
   const [fromToken, setFromToken] = useState<SwapTokenKey>('PLS');
-  const [toToken, setToToken] = useState<SwapTokenKey>('pHEX');
+  const [toToken, setToToken] = useState<SwapTokenKey>('PHEX');
   const [amount, setAmount] = useState('1000000');
-  const [prices, setPrices] = useState<Partial<Record<SwapTokenKey, number>>>({});
+  const [prices, setPrices] = useState<Partial<Record<SwapTokenKey, number>>>(readSwapPriceCache);
   const [loading, setLoading] = useState(false);
   const [refresh, setRefresh] = useState(0);
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     setLoading(true);
-    void Promise.all(SWAP_TOKEN_KEYS.map(async key => {
+    const coinIds = [...new Set(SWAP_TOKENS.flatMap(token => 'coinGeckoId' in token ? [token.coinGeckoId] : []))];
+    const simplePriceRequest = coinIds.length
+      ? jsonRequest(`https://api.coingecko.com/api/v3/simple/price?ids=${coinIds.join(',')}&vs_currencies=usd`, 10000).catch(() => ({}))
+      : Promise.resolve({});
+    void simplePriceRequest.then(simplePrices => Promise.all(SWAP_TOKENS.map(async token => {
       try {
-        const stats = await fetchTokenStats(TOKEN_DATA[key]);
-        return [key, stats.price > 0 ? stats.price : null] as const;
-      } catch { return [key, null] as const; }
-    })).then(results => {
+        if ('source' in token) {
+          const stats = await fetchTokenStats(TOKEN_DATA[token.source]);
+          return [token.id, stats.price > 0 ? stats.price : null] as const;
+        }
+        const livePrice = 'coinGeckoId' in token ? Number(simplePrices?.[token.coinGeckoId]?.usd ?? 0) : 0;
+        const fallback = 'fallbackPrice' in token ? token.fallbackPrice : null;
+        return [token.id, livePrice > 0 ? livePrice : fallback] as const;
+      } catch {
+        return [token.id, 'fallbackPrice' in token ? token.fallbackPrice : null] as const;
+      }
+    }))).then(results => {
       if (cancelled) return;
-      setPrices(results.reduce((next, [key, price]) => { if (price !== null) next[key] = price; return next; }, {} as Partial<Record<SwapTokenKey, number>>));
+      const next = results.reduce((merged, [key, price]) => { if (price !== null && price > 0) merged[key] = price; return merged; }, { ...readSwapPriceCache() } as Partial<Record<SwapTokenKey, number>>);
+      setPrices(next);
+      saveSwapPriceCache(next);
       setLoading(false);
     });
     return () => { cancelled = true; };
@@ -1103,10 +1233,15 @@ function SwapPanel({ open, onToggle }: { open: boolean; onToggle: () => void }) 
   const updateAmount = (value: string) => { const cleaned = value.replace(',', '.').replace(/[^0-9.]/g, ''); const [whole, ...fraction] = cleaned.split('.'); setAmount(`${whole}${fraction.length ? `.${fraction.join('')}` : ''}`); };
   const chooseFrom = (next: SwapTokenKey) => { if (next === toToken) setToToken(fromToken); setFromToken(next); };
   const chooseTo = (next: SwapTokenKey) => { if (next === fromToken) setFromToken(toToken); setToToken(next); };
-  const tokenControl = (token: SwapTokenKey, side: 'from' | 'to') => <div className="swap-token-control">
-    <img src={CORE_ICONS[tokenKey(token)]} alt={`${token} logo`}/>
-    <span><small>{side === 'from' ? 'You enter' : 'Estimated output'}</small><select value={token} onChange={event => side === 'from' ? chooseFrom(event.target.value as SwapTokenKey) : chooseTo(event.target.value as SwapTokenKey)} aria-label={`${side === 'from' ? 'From' : 'To'} token`}>{SWAP_TOKEN_KEYS.map(key => <option key={key} value={key}>{key} · {networkLabel(TOKEN_DATA[key].network)}</option>)}</select></span>
-  </div>;
+  const fromDefinition = SWAP_TOKENS.find(token => token.id === fromToken)!;
+  const toDefinition = SWAP_TOKENS.find(token => token.id === toToken)!;
+  const tokenControl = (tokenId: SwapTokenKey, side: 'from' | 'to') => {
+    const selected = SWAP_TOKENS.find(token => token.id === tokenId)!;
+    return <div className="swap-token-control">
+      <img src={CORE_ICONS[tokenKey(selected.symbol)]} alt={`${selected.symbol} logo`}/>
+      <span><small>{side === 'from' ? 'You enter' : 'Estimated output'}</small><select value={tokenId} onChange={event => side === 'from' ? chooseFrom(event.target.value as SwapTokenKey) : chooseTo(event.target.value as SwapTokenKey)} aria-label={`${side === 'from' ? 'From' : 'To'} token`}>{SWAP_TOKENS.map(token => <option key={token.id} value={token.id}>{token.symbol} · {networkLabel(token.network)}</option>)}</select></span>
+    </div>;
+  };
   return <section className={`swap-panel ${open ? 'open' : ''}`}>
     <button className="swap-fold" type="button" onClick={onToggle} aria-expanded={open}>
       <span className="swap-title"><i><ArrowDownUp size={21}/></i><span><small>LIVE EXCHANGE QUOTE</small><b>Swap</b></span></span><ChevronDown size={17}/>
@@ -1117,7 +1252,7 @@ function SwapPanel({ open, onToggle }: { open: boolean; onToggle: () => void }) 
         <button className="swap-direction" type="button" onClick={() => { setFromToken(toToken); setToToken(fromToken); }} aria-label="Reverse swap direction"><ArrowDownUp size={17}/></button>
         <div className="swap-side output">{tokenControl(toToken, 'to')}<strong>{loading ? '…' : quote === null ? '—' : formatAmount(quote)}</strong><em>{quote !== null && toPrice ? money(quote * toPrice) : loading ? 'Loading live price…' : 'Price unavailable'}</em></div>
       </div>
-      <div className="swap-rate"><span><small>INDICATIVE RATE</small><b>{rate === null ? loading ? 'Reading live markets…' : 'Price unavailable' : `1 ${fromToken} = ${formatAmount(rate)} ${toToken}`}</b></span><button type="button" onClick={() => setRefresh(value => value + 1)} disabled={loading}><RefreshCw size={13} className={loading ? 'spin-icon' : ''}/>Refresh</button></div>
+      <div className="swap-rate"><span><small>INDICATIVE RATE</small><b>{rate === null ? loading ? 'Reading live markets…' : 'Price unavailable' : `1 ${fromDefinition.symbol} = ${formatAmount(rate)} ${toDefinition.symbol}`}</b></span><button type="button" onClick={() => setRefresh(value => value + 1)} disabled={loading}><RefreshCw size={13} className={loading ? 'spin-icon' : ''}/>Refresh</button></div>
       <p className="swap-note"><LockKeyhole size={12}/>Watch-only exchange estimate using the app’s live token prices. It does not connect a wallet or submit a PulseX transaction.</p>
     </div>}
   </section>;
@@ -1471,15 +1606,26 @@ function App() {
 
   const refreshWallet = async (wallet: TrackedWallet, requestedNetwork: Network = network) => {
     portfolioRequestRef.current[wallet.id] = requestedNetwork;
-    setPortfolios(current => ({ ...current, [wallet.id]: { assets: current[wallet.id]?.network === requestedNetwork ? current[wallet.id].assets : [], loading: true, error: '', refreshedAt: current[wallet.id]?.network === requestedNetwork ? current[wallet.id].refreshedAt : null, network: requestedNetwork } }));
+    const saved = cachedPortfolio(wallet.id, requestedNetwork);
+    setPortfolios(current => {
+      const currentPortfolio = current[wallet.id]?.network === requestedNetwork ? current[wallet.id] : undefined;
+      const fallback = currentPortfolio ?? saved;
+      return { ...current, [wallet.id]: { assets: ensureUsdcAssets(fallback?.assets ?? [], requestedNetwork), loading: true, error: '', refreshedAt: fallback?.refreshedAt ?? null, network: requestedNetwork } };
+    });
     try {
       const assets = await loadPortfolio({ ...wallet, network: requestedNetwork });
       if (portfolioRequestRef.current[wallet.id] !== requestedNetwork) return;
-      setPortfolios(current => ({ ...current, [wallet.id]: { assets, loading: false, error: '', refreshedAt: Date.now(), network: requestedNetwork } }));
+      const nextPortfolio: Portfolio = { assets, loading: false, error: '', refreshedAt: Date.now(), network: requestedNetwork };
+      savePortfolioCache(wallet.id, nextPortfolio);
+      setPortfolios(current => ({ ...current, [wallet.id]: nextPortfolio }));
     } catch (requestError) {
       if (portfolioRequestRef.current[wallet.id] !== requestedNetwork) return;
       const message = requestError instanceof Error && requestError.name === 'AbortError' ? 'The live indexer timed out. Tap refresh to try again.' : 'Live portfolio data is temporarily unavailable.';
-      setPortfolios(current => ({ ...current, [wallet.id]: { assets: current[wallet.id]?.network === requestedNetwork ? current[wallet.id].assets : [], loading: false, error: message, refreshedAt: current[wallet.id]?.network === requestedNetwork ? current[wallet.id].refreshedAt : null, network: requestedNetwork } }));
+      setPortfolios(current => {
+        const fallback = current[wallet.id]?.network === requestedNetwork ? current[wallet.id] : saved;
+        const assets = ensureUsdcAssets(fallback?.assets ?? [], requestedNetwork);
+        return { ...current, [wallet.id]: { assets, loading: false, error: assets.some(asset => asset.value !== 0) ? 'Offline — showing the last data saved on this device.' : message, refreshedAt: fallback?.refreshedAt ?? null, network: requestedNetwork } };
+      });
     }
   };
 
@@ -1588,7 +1734,8 @@ function App() {
   const selectedEthereumValue = selectedPortfolio?.assets.reduce((total, asset) => total + (asset.network === 'Ethereum' ? asset.value ?? 0 : 0), 0) ?? 0;
   const selectedPulseValue = selectedPortfolio?.assets.reduce((total, asset) => total + (asset.network === 'PulseChain' ? asset.value ?? 0 : 0), 0) ?? 0;
   const matchingWallet = validAddress(address) ? wallets.find(wallet => wallet.address.toLowerCase() === address.toLowerCase()) : undefined;
-  const filteredAssets = selectedPortfolio?.assets.filter(asset => {
+  const selectedAssets = ensureUsdcAssets(selectedPortfolio?.assets ?? [], network);
+  const filteredAssets = selectedAssets.filter(asset => {
     const symbol = tokenKey(asset.symbol);
     const name = tokenKey(asset.name);
     const isDust = HIDDEN_DUST_SYMBOLS.has(symbol) || [...HIDDEN_DUST_SYMBOLS].some(dust => symbol.includes(dust) || name.includes(dust));
@@ -1597,13 +1744,16 @@ function App() {
     const verifiedContract = VERIFIED_TOKEN_CONTRACTS[asset.network]?.[symbol];
     if (verifiedContract && !isVerifiedCoreAsset(asset)) return false;
     return isVerifiedCoreAsset(asset) || FEATURED_SYMBOLS.has(symbol) || (asset.value !== null && asset.value >= 0.01);
-  }) ?? [];
-  const hiddenDustCount = (selectedPortfolio?.assets.length ?? 0) - filteredAssets.length;
-  const visibleAssets = filteredAssets.slice(0, showAllAssets ? undefined : 30);
+  });
+  const hiddenDustCount = selectedAssets.length - filteredAssets.length;
+  const visibleAssets = [...filteredAssets]
+    .sort((left, right) => Number(tokenKey(right.symbol) === 'USDC') - Number(tokenKey(left.symbol) === 'USDC'))
+    .slice(0, showAllAssets ? undefined : 30);
   const allocationAssets = wallets.flatMap(wallet => {
     const portfolio = portfolios[wallet.id];
     return portfolio?.network === network ? portfolio.assets : [];
   });
+  const pulseLeague = pulseLeagueForAssets(allocationAssets);
   const allocationByToken = allocationAssets.reduce((tokens, asset) => {
     const value = Math.max(asset.value ?? 0, 0);
     if (!(value > 0)) return tokens;
@@ -1634,7 +1784,7 @@ function App() {
         <div className="ambient ambient-one"/><div className="ambient ambient-two"/>
         <div className="intake-copy">
           <div className="sticky-hero">
-          <div className="hero-title-row"><h1>{ui.hero && <>{ui.hero}<br/></>}<span>{ui.privateView}</span></h1></div>
+          <div className="hero-title-row"><h1>{ui.hero && <>{ui.hero}<br/></>}<span>{ui.privateView}</span></h1><span className="pulse-league" title="Highest PulseChain core-token league, based on percentage of user supply"><i>{pulseLeague.emoji}</i><b>{pulseLeague.label}</b></span></div>
           <p>{ui.subtitle}</p>
           <div className="trust-row"><span><LockKeyhole size={15}/>{ui.noConnection}</span><span><ShieldCheck size={15}/>{ui.noSeed}</span><span className="trust-live"><Radio size={12}/>Live</span></div>
           <div className="ecosystem-strip"><span>{ui.builtFor}</span><div>{['ETH', 'PLS', 'HEX', 'pHEX', 'cHEX', 'PLSX', 'PRVX', 'INC'].map(sym => (
@@ -1818,3 +1968,9 @@ function App() {
 const rootHost = globalThis as typeof globalThis & { __pulseVaultReactRoot?: ReturnType<typeof createRoot> };
 const appRoot = rootHost.__pulseVaultReactRoot ??= createRoot(document.getElementById('root')!);
 appRoot.render(<React.StrictMode><App/></React.StrictMode>);
+
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => {
+    void navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`, { scope: import.meta.env.BASE_URL });
+  });
+}
