@@ -1,13 +1,14 @@
 import React, { FormEvent, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Activity, ArrowDownUp, ArrowLeft, ArrowRight, ArrowUpRight, Calculator, ChartPie, ChevronDown, Copy, Eye, EyeOff, FlaskConical, FolderPlus, Info, Languages, LockKeyhole, Network as NetworkIcon, Palette, Radio, RefreshCw, ScanSearch, Settings, ShieldCheck, SlidersHorizontal, Trash2, Vibrate, Volume2, VolumeX, WalletCards, X } from 'lucide-react';
+import { Activity, ArrowDownUp, ArrowLeft, ArrowRight, ArrowUpRight, Calculator, ChartPie, ChevronDown, CircleDollarSign, Copy, Eye, EyeOff, FlaskConical, FolderPlus, Info, Languages, LockKeyhole, Network as NetworkIcon, Palette, Radio, RefreshCw, ScanSearch, Settings, ShieldCheck, SlidersHorizontal, Trash2, Vibrate, Volume2, VolumeX, WalletCards, X } from 'lucide-react';
 import { createChart, IChartApi, ISeriesApi, LineStyle, LineSeries } from 'lightweight-charts';
 import './styles.css';
 
 type ChainNetwork = 'PulseChain' | 'Ethereum';
 type Network = ChainNetwork | 'Both';
 type Language = 'en' | 'fr' | 'es' | 'nl';
-type SettingsSection = 'language' | 'network' | 'customize' | 'sound' | 'info' | null;
+type FiatCurrency = 'USD' | 'XPF' | 'AUD' | 'CAD' | 'CHF' | 'EUR' | 'GBP' | 'JPY' | 'NZD' | 'SGD';
+type SettingsSection = 'currency' | 'customize' | 'info' | 'language' | 'network' | 'sound' | null;
 type CustomPanel = 'tracked' | 'address' | 'newWallet' | 'allocation' | 'hexStakes' | 'hexCalculator' | 'hexSimulator' | 'sentiment';
 type PanelTheme = 'default' | 'pink' | 'green' | 'cyan' | 'purple' | 'gold' | 'red' | 'blue' | 'teal' | 'orange' | 'silver' | 'hex' | 'pulse' | 'aurora' | 'cyber' | 'sunset' | 'ocean' | 'toxic' | 'ember' | 'prism' | 'plasma';
 type TrackedWallet = { id: string; label: string; address: string; network: Network; groupId?: string };
@@ -42,6 +43,8 @@ const HAPTIC_STORAGE_KEY = 'pulse-vault-panel-haptic-v1';
 const PANEL_THEMES_STORAGE_KEY = 'pulse-vault-panel-themes-v1';
 const CUSTOM_GRADIENTS_STORAGE_KEY = 'pulse-vault-custom-gradients-v1';
 const MARKET_SENTIMENT_CACHE_KEY = 'pulse-vault-market-sentiment-v1';
+const FIAT_CURRENCY_STORAGE_KEY = 'pulse-vault-fiat-currency-v1';
+const FIAT_RATES_STORAGE_KEY = 'pulse-vault-fiat-rates-v1';
 const PORTFOLIO_CACHE_KEY = 'pulse-vault-last-portfolios-v1';
 const SWAP_PRICE_CACHE_KEY = 'pulse-vault-last-swap-prices-v1';
 const DEFAULT_GROUP_ID = 'my-wallet';
@@ -93,6 +96,21 @@ const LANGUAGE_OPTIONS: { id: Language; label: string; native: string }[] = [
   { id: 'fr', label: 'French', native: 'Français' },
   { id: 'nl', label: 'Dutch', native: 'Nederlands' },
 ];
+const FIAT_OPTIONS: { id: FiatCurrency; label: string; region: string; symbol: string; locale: string }[] = [
+  { id: 'USD', label: 'US dollar', region: 'United States', symbol: '$', locale: 'en-US' },
+  { id: 'XPF', label: 'CFP franc', region: 'New Caledonia · French Pacific', symbol: 'F', locale: 'fr-NC' },
+  { id: 'AUD', label: 'Australian dollar', region: 'Australia', symbol: 'A$', locale: 'en-AU' },
+  { id: 'CAD', label: 'Canadian dollar', region: 'Canada', symbol: 'CA$', locale: 'en-CA' },
+  { id: 'CHF', label: 'Swiss franc', region: 'Switzerland', symbol: 'CHF', locale: 'fr-CH' },
+  { id: 'EUR', label: 'Euro', region: 'Euro area', symbol: '€', locale: 'fr-FR' },
+  { id: 'GBP', label: 'Pound sterling', region: 'United Kingdom', symbol: '£', locale: 'en-GB' },
+  { id: 'JPY', label: 'Japanese yen', region: 'Japan', symbol: '¥', locale: 'ja-JP' },
+  { id: 'NZD', label: 'New Zealand dollar', region: 'New Zealand', symbol: 'NZ$', locale: 'en-NZ' },
+  { id: 'SGD', label: 'Singapore dollar', region: 'Singapore', symbol: 'S$', locale: 'en-SG' },
+];
+const DEFAULT_FIAT_RATES: Record<FiatCurrency, number | null> = { USD: 1, XPF: null, AUD: null, CAD: null, CHF: null, EUR: null, GBP: null, JPY: null, NZD: null, SGD: null };
+let activeFiatCurrency: FiatCurrency = 'USD';
+let activeFiatRates: Record<FiatCurrency, number | null> = { ...DEFAULT_FIAT_RATES };
 const UI_COPY = {
   en: { hero: '', privateView: 'Private Wallet Portfolio', subtitle: 'Track your PulseChain and Ethereum wallets from one mobile-first, watch-only dashboard.', noConnection: 'No wallet connection', noSeed: 'No seed phrase', builtFor: 'BUILT FOR THE ECOSYSTEM', addAddress: 'ADD AN ADDRESS', enterAddress: 'Enter a public address', privateWatchlist: 'PRIVATE WATCHLIST', trackedWallets: 'Your tracked wallets', reveal: 'Reveal', hide: 'Hide', totalPortfolio: 'TOTAL PORTFOLIO', syncing: 'Syncing…', syncAll: 'Sync all', address: 'address', addresses: 'addresses', showCards: 'Show cards', hideCards: 'Hide cards', liveAssets: 'Live assets', selectedAddress: 'SELECTED ADDRESS', showDust: 'Show dust', hideDust: 'Hide dust', organize: 'ORGANIZE YOUR WATCHLIST', createAnother: 'Create another wallet', createdWallets: 'Created wallets', allocation: 'Portfolio allocation', allocationEyebrow: 'CRYPTOCURRENCY MIX', noAllocation: 'No priced assets are available for this wallet yet.', settings: 'Settings', language: 'Language', refresh: 'Refresh', footer: 'Watch-only portfolio intelligence' },
   fr: { hero: '', privateView: 'Portefeuille privé.', subtitle: 'Suivez vos portefeuilles PulseChain et Ethereum depuis un tableau de bord mobile en lecture seule.', noConnection: 'Aucune connexion wallet', noSeed: 'Aucune phrase secrète', builtFor: 'CONÇU POUR L’ÉCOSYSTÈME', addAddress: 'AJOUTER UNE ADRESSE', enterAddress: 'Saisir une adresse publique', privateWatchlist: 'LISTE PRIVÉE', trackedWallets: 'Vos portefeuilles suivis', reveal: 'Afficher', hide: 'Masquer', totalPortfolio: 'PORTEFEUILLE TOTAL', syncing: 'Synchronisation…', syncAll: 'Tout synchroniser', address: 'adresse', addresses: 'adresses', showCards: 'Afficher les cartes', hideCards: 'Masquer les cartes', liveAssets: 'Actifs en direct', selectedAddress: 'ADRESSE SÉLECTIONNÉE', showDust: 'Afficher la poussière', hideDust: 'Masquer la poussière', organize: 'ORGANISER VOTRE LISTE', createAnother: 'Créer un autre portefeuille', createdWallets: 'Portefeuilles créés', allocation: 'Répartition du portefeuille', allocationEyebrow: 'MIX DE CRYPTOMONNAIES', noAllocation: 'Aucun actif valorisé disponible pour ce portefeuille.', settings: 'Réglages', language: 'Langue', refresh: 'Actualiser', footer: 'Suivi de portefeuille en lecture seule' },
@@ -470,13 +488,39 @@ function compactAmount(value: string, decimals = 1) {
 function compactSupply(value: string) {
   return compactAmount(value, 2);
 }
+function readFiatCurrency(): FiatCurrency {
+  try {
+    const saved = localStorage.getItem(FIAT_CURRENCY_STORAGE_KEY) as FiatCurrency | null;
+    return FIAT_OPTIONS.some(option => option.id === saved) ? saved! : 'USD';
+  } catch { return 'USD'; }
+}
+function readFiatRates(): Record<FiatCurrency, number | null> {
+  try {
+    const saved = JSON.parse(localStorage.getItem(FIAT_RATES_STORAGE_KEY) || '{}') as Partial<Record<FiatCurrency, unknown>>;
+    return Object.fromEntries(FIAT_OPTIONS.map(option => [option.id, option.id === 'USD' ? 1 : Number(saved[option.id]) > 0 ? Number(saved[option.id]) : null])) as Record<FiatCurrency, number | null>;
+  } catch { return { ...DEFAULT_FIAT_RATES }; }
+}
+function setActiveFiat(currency: FiatCurrency, rates: Record<FiatCurrency, number | null>) {
+  activeFiatCurrency = currency;
+  activeFiatRates = rates;
+}
+function formatFiat(value: number, compact = false) {
+  const option = FIAT_OPTIONS.find(item => item.id === activeFiatCurrency)!;
+  const rate = activeFiatRates[activeFiatCurrency];
+  if (!(rate && rate > 0)) return `${option.symbol}—`;
+  const converted = value * rate;
+  const small = converted > 0 && converted < 1;
+  return new Intl.NumberFormat(option.locale, {
+    style: 'currency', currency: option.id, currencyDisplay: 'narrowSymbol',
+    ...(compact ? { notation: 'compact', maximumFractionDigits: 1 } : small ? { maximumSignificantDigits: 3 } : { maximumFractionDigits: option.id === 'XPF' || option.id === 'JPY' ? 0 : 2 }),
+  }).format(converted);
+}
 function compactUsd(value: number) {
-  return value > 0 ? `$${compactAmount(String(value), 1)}` : 'N/A';
+  return value > 0 ? formatFiat(value, true) : 'N/A';
 }
 function money(value: number | null) {
   if (value === null || !Number.isFinite(value)) return 'Price unavailable';
-  if (value > 0 && value < 0.01) return `$${value.toPrecision(3)}`;
-  return `$${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  return formatFiat(value);
 }
 
 function usdcPlaceholder(network: ChainNetwork): Asset {
@@ -1431,7 +1475,7 @@ function HexStakesPanel({ state, open, filter, network, walletCount, holdingsVal
       <div className="hex-stakes-scope"><span><b>All wallets</b><small>{walletCount} {walletCount === 1 ? 'address' : 'addresses'} · {networkLabel(state.network)}</small></span><button type="button" className={state.loading ? 'loading' : ''} onClick={onRefresh} disabled={state.loading} aria-label="Refresh HEX stakes"><RefreshCw size={15}/>{state.loading ? 'Reading' : 'Refresh'}</button></div>
       <div className="hex-stakes-network-switch" role="group" aria-label="HEX stakes network">{(['Ethereum', 'PulseChain', 'Both'] as Network[]).map(option => <button type="button" key={option} className={network === option ? 'active' : ''} aria-pressed={network === option} onClick={() => onNetwork(option)}>{option === 'Both' ? 'Both networks' : option}</button>)}</div>
       {state.loading && state.stakes.length === 0 && state.endedStakes.length === 0 ? <div className="hex-stakes-empty"><RefreshCw size={18} className="spin-icon"/>Reading live and historical HEX stake contracts…</div> : <>
-        <div className="hex-stakes-summary"><div className="token-holdings-total"><small>TOKEN HOLDINGS</small><strong>{privateMode ? '••••' : holdingsLoading ? 'Reading…' : money(holdingsValue)}</strong><em>{networkLabel(network)} liquid portfolio</em></div><div><small>HEX STAKES</small><strong>{privateMode ? '••••' : hasPricedStake ? money(totalValue) : state.stakes.length ? 'Price unavailable' : '$0.00'}</strong><em>{privateMode ? '••••' : `${compactAmount(String(totalHex), 2)} HEX principal`}</em></div><div className="net-worth-total"><small>NET WORTH</small><strong>{privateMode ? '••••' : holdingsLoading ? 'Reading…' : money(holdingsValue + totalValue)}</strong><em>Holdings + currently staked HEX</em></div><div className="unstaked-total"><small>UNSTAKED / RETURNED</small><strong>{privateMode ? '••••' : hasPricedUnstaked ? money(totalUnstakedValue) : state.endedStakes.length ? 'Price unavailable' : '$0.00'}</strong><em>{privateMode ? '••••' : `${compactAmount(String(totalUnstakedHex), 2)} HEX · ${state.endedStakes.length} ended`}</em></div></div>
+        <div className="hex-stakes-summary"><div className="token-holdings-total"><small>TOKEN HOLDINGS</small><strong>{privateMode ? '••••' : holdingsLoading ? 'Reading…' : money(holdingsValue)}</strong><em>{networkLabel(network)} liquid portfolio</em></div><div><small>HEX STAKES</small><strong>{privateMode ? '••••' : hasPricedStake ? money(totalValue) : state.stakes.length ? 'Price unavailable' : money(0)}</strong><em>{privateMode ? '••••' : `${compactAmount(String(totalHex), 2)} HEX principal`}</em></div><div className="net-worth-total"><small>NET WORTH</small><strong>{privateMode ? '••••' : holdingsLoading ? 'Reading…' : money(holdingsValue + totalValue)}</strong><em>Holdings + currently staked HEX</em></div><div className="unstaked-total"><small>UNSTAKED / RETURNED</small><strong>{privateMode ? '••••' : hasPricedUnstaked ? money(totalUnstakedValue) : state.endedStakes.length ? 'Price unavailable' : money(0)}</strong><em>{privateMode ? '••••' : `${compactAmount(String(totalUnstakedHex), 2)} HEX · ${state.endedStakes.length} ended`}</em></div></div>
         <div className="hex-staking-addresses"><div className="hex-subheading"><span><b>Staking addresses</b><small>Addresses with open or ended HEX stakes</small></span><em>{stakingAddresses.size}</em></div>{stakingAddresses.size ? <div className="hex-address-list">{[...stakingAddresses.values()].map(item => <article key={item.walletId}><div><span><b>{item.label}</b>{[...item.networks].map(chain => <em className={chain === 'Ethereum' ? 'ethereum' : 'pulsechain'} key={chain}>{chain === 'Ethereum' ? 'ETH' : 'PLS'}</em>)}</span><code title={item.address}>{privateMode ? '••••••••••••••••••••' : item.address}</code></div><small>{item.open} open · {item.ended} unstaked</small></article>)}</div> : <div className="hex-address-empty">No staking addresses found on {networkLabel(network)}.</div>}</div>
         <div className="hex-stakes-filters" role="group" aria-label="Filter HEX stakes">{([['all', `All ${state.stakes.length}`], ['active', `Active ${activeCount}`], ['matured', `Matured ${maturedCount}`]] as const).map(([id, label]) => <button key={id} type="button" className={filter === id ? 'active' : ''} aria-pressed={filter === id} onClick={() => onFilter(id)}>{label}</button>)}</div>
         {state.error && <div className="hex-stakes-warning">{state.error}</div>}
@@ -1568,6 +1612,9 @@ function App() {
   const [customGradients, setCustomGradients] = useState<Partial<Record<CustomPanel, { from: string; to: string }>>>(readCustomGradients);
   const [customGradientDraft, setCustomGradientDraft] = useState({ from: '#ff2ca8', to: '#14d9ff' });
   const [language, setLanguage] = useState<Language>(readLanguage);
+  const [fiatCurrency, setFiatCurrency] = useState<FiatCurrency>(readFiatCurrency);
+  const [fiatRates, setFiatRates] = useState<Record<FiatCurrency, number | null>>(readFiatRates);
+  const [fiatRatesLoading, setFiatRatesLoading] = useState(true);
   const [addressFormOpen, setAddressFormOpen] = useState(false);
   const [label, setLabel] = useState('');
   const [address, setAddress] = useState('');
@@ -1595,17 +1642,34 @@ function App() {
   const hexStakeCacheRef = useRef<Partial<Record<Network, HexStakeState>>>({});
   const hexStakeNetworkRef = useRef<Network>('Both');
   const walletStakeKey = wallets.map(wallet => `${wallet.id}:${wallet.address.toLowerCase()}:${wallet.label}`).join('|');
+  setActiveFiat(fiatCurrency, fiatRates);
 
   useEffect(() => localStorage.setItem(STORAGE_KEY, JSON.stringify(wallets)), [wallets]);
   useEffect(() => localStorage.setItem(GROUP_STORAGE_KEY, JSON.stringify(walletGroups)), [walletGroups]);
   useEffect(() => localStorage.setItem(NETWORK_STORAGE_KEY, network), [network]);
   useEffect(() => { localStorage.setItem(LANGUAGE_STORAGE_KEY, language); document.documentElement.lang = language; }, [language]);
+  useEffect(() => localStorage.setItem(FIAT_CURRENCY_STORAGE_KEY, fiatCurrency), [fiatCurrency]);
   useEffect(() => localStorage.setItem(SETTINGS_TRANSPARENCY_STORAGE_KEY, String(settingsTransparency)), [settingsTransparency]);
   useEffect(() => localStorage.setItem(SOUND_STORAGE_KEY, String(soundEnabled)), [soundEnabled]);
   useEffect(() => localStorage.setItem(HAPTIC_STORAGE_KEY, String(hapticEnabled)), [hapticEnabled]);
   useEffect(() => localStorage.setItem(PANEL_THEMES_STORAGE_KEY, JSON.stringify(panelThemes)), [panelThemes]);
   useEffect(() => localStorage.setItem(CUSTOM_GRADIENTS_STORAGE_KEY, JSON.stringify(customGradients)), [customGradients]);
   useEffect(() => { if (!wallets.some(wallet => wallet.id === selectedId)) setSelectedId(wallets[0]?.id ?? ''); }, [wallets, selectedId]);
+  useEffect(() => {
+    let cancelled = false;
+    const quotes = FIAT_OPTIONS.filter(option => option.id !== 'USD' && option.id !== 'XPF').map(option => option.id).join(',');
+    void jsonRequest(`https://api.frankfurter.dev/v2/rates?base=USD&quotes=${quotes}`, 12000).then((rows: { quote?: string; rate?: number }[]) => {
+      if (cancelled || !Array.isArray(rows)) return;
+      const next = { ...DEFAULT_FIAT_RATES };
+      for (const row of rows) {
+        if (FIAT_OPTIONS.some(option => option.id === row.quote) && Number(row.rate) > 0) next[row.quote as FiatCurrency] = Number(row.rate);
+      }
+      if (next.EUR) next.XPF = next.EUR * 119.331742;
+      setFiatRates(next);
+      localStorage.setItem(FIAT_RATES_STORAGE_KEY, JSON.stringify(next));
+    }).catch(() => undefined).finally(() => { if (!cancelled) setFiatRatesLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
   useEffect(() => setShowAllAssets(false), [selectedId]);
   useEffect(() => { setChartOpen(false); setChartPeriod('24H'); setChartData([]); setChartPercentage(0); setChartLoading(false); }, [selectedToken]);
   useEffect(() => {
@@ -2033,7 +2097,7 @@ function App() {
         </div>
         {!trackedCollapsed && <div className="vault-board">
           <div className="vault-summary">
-            <div className="portfolio-totals"><div><span>{ui.totalPortfolio} · {networkLabel(network)}</span><strong>{privateMode ? '••••••' : networkLoading ? ui.syncing : knownValue > 0 ? money(knownValue) : '$0.00'}</strong><small>{wallets.length} {wallets.length === 1 ? ui.address : ui.addresses} · {networkLabel(network)}</small></div>{selectedWallet && <div className="selected-total"><span>{selectedWallet.label} · {networkLabel(network)}</span><strong>{privateMode ? '••••••' : networkLoading ? ui.syncing : selectedValue > 0 ? money(selectedValue) : '$0.00'}</strong><small>{privateMode ? 'Network values hidden' : network === 'Both' ? `ETH ${money(selectedEthereumValue)} · PLS ${money(selectedPulseValue)}` : `${networkLabel(network)} · all priced coins`}</small></div>}</div>
+            <div className="portfolio-totals"><div><span>{ui.totalPortfolio} · {networkLabel(network)}</span><strong>{privateMode ? '••••••' : networkLoading ? ui.syncing : knownValue > 0 ? money(knownValue) : money(0)}</strong><small>{wallets.length} {wallets.length === 1 ? ui.address : ui.addresses} · {networkLabel(network)}</small></div>{selectedWallet && <div className="selected-total"><span>{selectedWallet.label} · {networkLabel(network)}</span><strong>{privateMode ? '••••••' : networkLoading ? ui.syncing : selectedValue > 0 ? money(selectedValue) : money(0)}</strong><small>{privateMode ? 'Network values hidden' : network === 'Both' ? `ETH ${money(selectedEthereumValue)} · PLS ${money(selectedPulseValue)}` : `${networkLabel(network)} · all priced coins`}</small></div>}</div>
             {selectedWallet && <button className={`sync-control ${networkLoading ? 'spinning' : ''}`} onClick={() => wallets.forEach(wallet => void refreshWallet(wallet, network))} disabled={networkLoading}><RefreshCw size={16}/>{networkLoading ? ui.syncing : ui.syncAll}</button>}
           </div>
           <div className="wallet-groups">
@@ -2083,16 +2147,18 @@ function App() {
     </main>
     {settingsOpen && <section className="settings-panel" style={{ '--settings-opacity': settingsTransparency / 100 } as React.CSSProperties} aria-label={ui.settings}>
       <div className="settings-head">
-        <div className="settings-head-title">{settingsSection && <button className="settings-back" type="button" onClick={() => setSettingsSection(null)} aria-label="Back to settings"><ArrowLeft size={17}/></button>}<div><p className="eyebrow">{ui.settings.toUpperCase()}</p><h2>{settingsSection === 'language' ? ui.language : settingsSection === 'network' ? 'Network' : settingsSection === 'customize' ? 'Customize' : settingsSection === 'sound' ? 'Sound & haptics' : settingsSection === 'info' ? 'How to use the app' : ui.settings}</h2></div></div>
+        <div className="settings-head-title">{settingsSection && <button className="settings-back" type="button" onClick={() => setSettingsSection(null)} aria-label="Back to settings"><ArrowLeft size={17}/></button>}<div><p className="eyebrow">{ui.settings.toUpperCase()}</p><h2>{settingsSection === 'currency' ? 'Currency' : settingsSection === 'customize' ? 'Customize' : settingsSection === 'info' ? 'How to use the app' : settingsSection === 'language' ? ui.language : settingsSection === 'network' ? 'Network' : settingsSection === 'sound' ? 'Sound & haptics' : ui.settings}</h2></div></div>
         <button type="button" onClick={() => { setSettingsOpen(false); setSettingsSection(null); }} aria-label="Close settings"><X size={18}/></button>
       </div>
       {!settingsSection && <div className="settings-menu">
+        <button type="button" onClick={() => setSettingsSection('currency')}><i><CircleDollarSign size={20}/></i><span><b>Currency</b><small>{FIAT_OPTIONS.find(option => option.id === fiatCurrency)?.label} · {fiatCurrency}</small></span><ChevronDown size={17}/></button>
+        <button type="button" onClick={() => setSettingsSection('customize')}><i><SlidersHorizontal size={20}/></i><span><b>Customize</b><small>Panel transparency · {settingsTransparency}%</small></span><ChevronDown size={17}/></button>
+        <button type="button" onClick={() => setSettingsSection('info')}><i><Info size={20}/></i><span><b>Info</b><small>Learn what every dashboard panel does</small></span><ChevronDown size={17}/></button>
         <button type="button" onClick={() => setSettingsSection('language')}><i><Languages size={20}/></i><span><b>{ui.language}</b><small>{LANGUAGE_OPTIONS.find(option => option.id === language)?.native}</small></span><ChevronDown size={17}/></button>
         <button type="button" onClick={() => setSettingsSection('network')}><i><NetworkIcon size={20}/></i><span><b>Network</b><small>{networkLabel(network)}</small></span><ChevronDown size={17}/></button>
-        <button type="button" onClick={() => setSettingsSection('customize')}><i><SlidersHorizontal size={20}/></i><span><b>Customize</b><small>Panel transparency · {settingsTransparency}%</small></span><ChevronDown size={17}/></button>
         <button type="button" onClick={() => setSettingsSection('sound')}><i>{soundEnabled ? <Volume2 size={20}/> : <VolumeX size={20}/>}</i><span><b>Sound</b><small>Sound {soundEnabled ? 'on' : 'off'} · Haptics {hapticEnabled ? 'on' : 'off'}</small></span><ChevronDown size={17}/></button>
-        <button type="button" onClick={() => setSettingsSection('info')}><i><Info size={20}/></i><span><b>Info</b><small>Learn what every dashboard panel does</small></span><ChevronDown size={17}/></button>
       </div>}
+      {settingsSection === 'currency' && <div className="currency-settings"><div className="currency-rate-note"><CircleDollarSign size={16}/><span><b>Wallet display currency</b><small>{fiatRatesLoading ? 'Refreshing daily exchange rates…' : fiatRates[fiatCurrency] ? `1 USD = ${fiatRates[fiatCurrency]!.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${fiatCurrency}` : 'Saved rate unavailable · reconnect to refresh'}</small></span></div><div className="settings-network-options currency-options" role="group" aria-label="Wallet display currency">{FIAT_OPTIONS.map(option => <button type="button" key={option.id} className={fiatCurrency === option.id ? 'active' : ''} aria-pressed={fiatCurrency === option.id} onClick={() => setFiatCurrency(option.id)}><i>{option.symbol}</i><span><b>{option.label}</b><small>{option.region} · {option.id}</small></span></button>)}</div><p className="currency-source">Daily reference rates are cached on this device for offline display. CFP franc uses its fixed euro parity.</p></div>}
       {settingsSection === 'language' && <div className="language-options" role="group" aria-label={ui.language}>{LANGUAGE_OPTIONS.map(option => <button type="button" key={option.id} className={language === option.id ? 'active' : ''} aria-pressed={language === option.id} onClick={() => setLanguage(option.id)}><span>{option.native}</span><small>{option.label}</small></button>)}</div>}
       {settingsSection === 'network' && <div className="settings-network-options" role="group" aria-label="Network">{(['Ethereum', 'PulseChain', 'Both'] as Network[]).map(option => <button type="button" key={option} className={network === option ? 'active' : ''} aria-pressed={network === option} onClick={() => chooseNetwork(option)}><i className={option === 'Ethereum' ? 'eth-diamond' : option === 'PulseChain' ? 'pulse-dot' : 'both-network-icon'}>{option === 'Ethereum' ? '◆' : option === 'Both' ? <><span className="pulse-dot"/><span className="eth-diamond">◆</span></> : null}</i><span><b>{option === 'Both' ? 'Both networks' : option}</b><small>{option === 'Ethereum' ? 'ETH · Chain 1' : option === 'PulseChain' ? 'PLS · Chain 369' : 'PulseChain + Ethereum'}</small></span></button>)}</div>}
       {settingsSection === 'customize' && <div className="settings-customize">
