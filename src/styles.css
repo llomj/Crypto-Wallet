@@ -168,3 +168,6 @@
 /* Fiat display settings keep the established Settings panel anatomy. */
 .currency-rate-note{margin-bottom:11px;padding:12px;border:1px solid #45ddba38;border-radius:11px;background:linear-gradient(135deg,#0b271f9c,#07141be0);color:#56e4ba;display:flex;align-items:center;gap:10px}.currency-rate-note span b,.currency-rate-note span small{display:block}.currency-rate-note span b{color:#eef8f4;font:700 13px 'Space Grotesk'}.currency-rate-note span small{margin-top:4px;color:#82aea1;font-size:9px}.currency-options{grid-template-columns:repeat(2,minmax(0,1fr))}.currency-options>button{min-width:0}.currency-options>button>i{height:28px;border:1px solid #ff3cab35;border-radius:9px;background:#ff2ca80c;color:#ff70c5;font:700 10px 'Space Grotesk'}.currency-options>button>span{min-width:0}.currency-options>button>span b,.currency-options>button>span small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.currency-source{margin:10px 2px 0;color:#6e6871;font-size:8px;line-height:1.5}
 @media(max-width:430px){.currency-options{grid-template-columns:1fr}.currency-options>button{min-height:57px}}
+
+/* Five-way dominance comparison keeps the combined major-market figure balanced. */
+.dominance-grid article:last-child{grid-column:1/-1}

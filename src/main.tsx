@@ -19,7 +19,7 @@ type HexStake = { id: string; walletId: string; walletLabel: string; walletAddre
 type HexEndedStake = { id: string; walletId: string; walletLabel: string; walletAddress: string; network: ChainNetwork; stakeId: string; endedAt: number; stakedHex: number; returnedHex: number; price: number | null };
 type HexStakeState = { stakes: HexStake[]; endedStakes: HexEndedStake[]; loading: boolean; error: string; refreshedAt: number | null; network: Network };
 type HexCalculatorMetrics = { network: ChainNetwork; shareRate: number; oneTShareHex: number; dailyHexPerTShare: number; price: number | null; sampleDays: number; loading: boolean; error: string };
-type MarketSentimentState = { bitcoin: number | null; bitcoinLabel: string; ethereum: number | null; pulseChain: number | null; btcDominance: number | null; ethDominance: number | null; altDominance: number | null; refreshedAt: number | null; loading: boolean; error: string };
+type MarketSentimentState = { bitcoin: number | null; bitcoinLabel: string; ethereum: number | null; pulseChain: number | null; btcDominance: number | null; ethDominance: number | null; pulseDominance: number | null; altDominance: number | null; refreshedAt: number | null; loading: boolean; error: string };
 type TokenStats = {
   price: number;
   change24h: number;
@@ -282,7 +282,6 @@ const TOKEN_DATA: Record<string, TokenInfo> = {
 const SWAP_TOKENS = [
   { id: 'BTC', symbol: 'BTC', network: 'Both', coinGeckoId: 'bitcoin' },
   { id: 'WBTC_ETH', symbol: 'WBTC', network: 'Ethereum', coinGeckoId: 'wrapped-bitcoin' },
-  { id: 'USDC_ETH', symbol: 'USDC', network: 'Ethereum', coinGeckoId: 'usd-coin', fallbackPrice: 1 },
   { id: 'USDC_PULSE', symbol: 'USDC', network: 'PulseChain', coinGeckoId: 'usd-coin', fallbackPrice: 1 },
   { id: 'PDAI_PULSE', symbol: 'pDAI', network: 'PulseChain', source: 'PDAI_PULSE' },
   { id: 'USDT_ETH', symbol: 'USDT', network: 'Ethereum', coinGeckoId: 'tether', fallbackPrice: 1 },
@@ -395,7 +394,7 @@ function saveSwapPriceCache(prices: Partial<Record<SwapTokenKey, number>>) {
 }
 
 function emptyMarketSentiment(): MarketSentimentState {
-  return { bitcoin: null, bitcoinLabel: '', ethereum: null, pulseChain: null, btcDominance: null, ethDominance: null, altDominance: null, refreshedAt: null, loading: false, error: '' };
+  return { bitcoin: null, bitcoinLabel: '', ethereum: null, pulseChain: null, btcDominance: null, ethDominance: null, pulseDominance: null, altDominance: null, refreshedAt: null, loading: false, error: '' };
 }
 
 function readMarketSentimentCache(): MarketSentimentState {
@@ -459,11 +458,13 @@ function assetContract(asset: Asset) { return asset.id.replace(/^(PulseChain|Eth
 function displayAssetSymbol(asset: Asset) {
   const symbol = tokenKey(asset.symbol);
   const canonicalHex = VERIFIED_TOKEN_CONTRACTS[asset.network]?.HEX.toLowerCase();
+  const canonicalPdai = VERIFIED_TOKEN_CONTRACTS.PulseChain?.PDAI.toLowerCase();
+  if (asset.network === 'PulseChain' && assetContract(asset) === canonicalPdai) return 'pDAI';
   return symbol === 'HEX' && asset.network === 'PulseChain' && assetContract(asset) === canonicalHex ? 'pHEX' : asset.symbol;
 }
 function isVerifiedCoreAsset(asset: Asset) {
   if (asset.native) return true;
-  const expectedContract = VERIFIED_TOKEN_CONTRACTS[asset.network]?.[tokenKey(asset.symbol)];
+  const expectedContract = VERIFIED_TOKEN_CONTRACTS[asset.network]?.[tokenKey(displayAssetSymbol(asset))];
   return expectedContract ? assetContract(asset) === expectedContract.toLowerCase() : false;
 }
 function formatUnits(value: string, decimals = 18) {
@@ -753,7 +754,7 @@ async function ethereumOraclePrice() {
 
 async function enrichMarketAssets(assets: Asset[], network: ChainNetwork) {
   const chainId = network === 'PulseChain' ? 'pulsechain' : 'ethereum';
-  const prioritized = [...assets.filter(asset => FEATURED_SYMBOLS.has(tokenKey(asset.symbol))), ...assets];
+  const prioritized = [...assets.filter(asset => FEATURED_SYMBOLS.has(tokenKey(displayAssetSymbol(asset)))), ...assets];
   const unique = prioritized.filter((asset, index, list) => list.findIndex(item => item.id.toLowerCase() === asset.id.toLowerCase()) === index).slice(0, 30);
   const enriched = new Map<string, { price: number; icon: string | null }>();
   const contracts = unique.map(asset => ({ asset, contract: asset.native ? WRAPPED_NATIVE[network] : asset.id })).filter(item => validAddress(item.contract));
@@ -1281,7 +1282,7 @@ function calculateHexStake(amountHex: number, days: number, metrics: HexCalculat
 
 function SwapPanel({ open, onToggle }: { open: boolean; onToggle: () => void }) {
   const [fromToken, setFromToken] = useState<SwapTokenKey>('BTC');
-  const [toToken, setToToken] = useState<SwapTokenKey>('USDC_ETH');
+  const [toToken, setToToken] = useState<SwapTokenKey>('USDC_PULSE');
   const [amount, setAmount] = useState('1');
   const [prices, setPrices] = useState<Partial<Record<SwapTokenKey, number>>>(readSwapPriceCache);
   const [loading, setLoading] = useState(false);
@@ -1383,7 +1384,7 @@ async function fetchMarketSentiment(previous: MarketSentimentState): Promise<Mar
     jsonRequest('https://api.alternative.me/fng/?limit=1', 10000),
     jsonRequest('https://api.coingecko.com/api/v3/global', 10000),
     jsonRequest('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true', 10000),
-    Promise.all([fetchTokenStats(TOKEN_DATA.PLS), fetchTokenStats(TOKEN_DATA.PLSX), fetchTokenStats(TOKEN_DATA.pHEX)]),
+    Promise.all([fetchTokenStats(TOKEN_DATA.PLS), fetchTokenStats(TOKEN_DATA.PLSX), fetchTokenStats(TOKEN_DATA.pHEX), fetchTokenStats(TOKEN_DATA.INC), fetchTokenStats(TOKEN_DATA.PRVX)]),
     jsonRequest('https://api.coinpaprika.com/v1/global', 10000),
     jsonRequest('https://api.coinpaprika.com/v1/tickers/eth-ethereum', 10000),
   ]);
@@ -1399,6 +1400,9 @@ async function fetchMarketSentiment(previous: MarketSentimentState): Promise<Mar
   const ethChange = Number(majors?.ethereum?.usd_24h_change ?? paprikaEth?.quotes?.USD?.percent_change_24h);
   const btcDominance = Number(global?.market_cap_percentage?.btc ?? paprikaGlobal?.bitcoin_dominance_percentage);
   const ethDominance = Number(global?.market_cap_percentage?.eth ?? (Number(paprikaEth?.quotes?.USD?.market_cap) / Number(paprikaGlobal?.market_cap_usd) * 100));
+  const totalMarketCap = Number(global?.total_market_cap?.usd ?? paprikaGlobal?.market_cap_usd);
+  const pulseMarketCap = pulseStats.reduce((total, stat) => total + Math.max(0, stat.marketCap) * 1_000_000, 0);
+  const pulseDominance = totalMarketCap > 0 && pulseMarketCap > 0 ? pulseMarketCap / totalMarketCap * 100 : NaN;
   const next: MarketSentimentState = {
     bitcoin: Number.isFinite(bitcoin) ? bitcoin : previous.bitcoin,
     bitcoinLabel: typeof fear?.value_classification === 'string' ? fear.value_classification : previous.bitcoinLabel,
@@ -1406,7 +1410,8 @@ async function fetchMarketSentiment(previous: MarketSentimentState): Promise<Mar
     pulseChain: pulseChange !== null ? momentumScore(pulseChange) : previous.pulseChain,
     btcDominance: Number.isFinite(btcDominance) ? btcDominance : previous.btcDominance,
     ethDominance: Number.isFinite(ethDominance) ? ethDominance : previous.ethDominance,
-    altDominance: Number.isFinite(btcDominance) && Number.isFinite(ethDominance) ? Math.max(0, 100 - btcDominance - ethDominance) : previous.altDominance,
+    pulseDominance: Number.isFinite(pulseDominance) ? pulseDominance : previous.pulseDominance,
+    altDominance: Number.isFinite(btcDominance) && Number.isFinite(ethDominance) ? Math.max(0, 100 - btcDominance - ethDominance - (Number.isFinite(pulseDominance) ? pulseDominance : 0)) : previous.altDominance,
     refreshedAt: Date.now(), loading: false,
     error: fearResult.status === 'rejected' && globalResult.status === 'rejected' && majorsResult.status === 'rejected' && pulseResult.status === 'rejected' ? 'Live sentiment sources are temporarily unavailable. Showing the last saved reading.' : '',
   };
@@ -1432,16 +1437,18 @@ function MarketSentimentPanel({ open, onToggle }: { open: boolean; onToggle: () 
   const dominance = [
     { label: 'BTC', value: state.btcDominance, color: '#f7931a' },
     { label: 'ETH', value: state.ethDominance, color: '#7792ff' },
+    { label: 'PULSECHAIN', value: state.pulseDominance, color: '#14d9ff' },
     { label: 'ALTCOINS', value: state.altDominance, color: '#d644ff' },
     { label: 'BTC + ETH', value: state.btcDominance !== null && state.ethDominance !== null ? state.btcDominance + state.ethDominance : null, color: '#21d9d0' },
   ];
+  const dominanceLabel = (value: number) => value > 0 && value < 0.1 ? `${value.toFixed(4)}%` : `${value.toFixed(1)}%`;
   return <section className={`sentiment-panel ${open ? 'open' : ''}`}>
     <button className="sentiment-fold" type="button" onClick={onToggle} aria-expanded={open}><span className="sentiment-title"><i><Activity size={21}/></i><span><small>MARKET TEMPERATURE</small><b>Market Sentiment</b></span></span><ChevronDown size={17}/></button>
     {open && <div className="sentiment-body">
       <div className="sentiment-meters">{meters.map(meter => <article key={meter.key}><div className="sentiment-gauge" style={{ '--sentiment-score': meter.value ?? 0, '--sentiment-color': sentimentColor(meter.value) } as React.CSSProperties}><span><strong>{meter.value === null ? '—' : Math.round(meter.value)}</strong><small>/100</small></span></div><div><small>{meter.note}</small><b>{meter.label}</b><em>{meter.detail}</em></div></article>)}</div>
-      <div className="dominance-section"><div className="dominance-heading"><span><small>GLOBAL MARKET SHARE</small><b>Bitcoin, Ethereum & Altcoin Dominance</b></span><button type="button" onClick={() => setRefresh(value => value + 1)} disabled={state.loading}><RefreshCw size={13} className={state.loading ? 'spin-icon' : ''}/>Refresh</button></div><div className="dominance-grid">{dominance.map(item => <article key={item.label}><span><i style={{ background: item.color }}/><small>{item.label}</small></span><strong>{item.value === null ? '—' : `${item.value.toFixed(1)}%`}</strong></article>)}</div></div>
+      <div className="dominance-section"><div className="dominance-heading"><span><small>GLOBAL MARKET SHARE</small><b>Bitcoin, Ethereum, PulseChain & Altcoins</b></span><button type="button" onClick={() => setRefresh(value => value + 1)} disabled={state.loading}><RefreshCw size={13} className={state.loading ? 'spin-icon' : ''}/>Refresh</button></div><div className="dominance-grid">{dominance.map(item => <article key={item.label}><span><i style={{ background: item.color }}/><small>{item.label}</small></span><strong>{item.value === null ? '—' : dominanceLabel(item.value)}</strong></article>)}</div></div>
       {state.error && <p className="sentiment-error">{state.error}</p>}
-      <p className="sentiment-source">Bitcoin Fear & Greed: Alternative.me · dominance: CoinGecko · ETH and PulseChain readings are transparent 24-hour momentum indicators, not official fear indexes.</p>
+      <p className="sentiment-source">Bitcoin Fear & Greed: Alternative.me · global dominance: CoinGecko · PulseChain share: combined PLS, PLSX, pHEX, INC and PRVX market caps versus the global crypto market · ETH and PulseChain readings are transparent 24-hour momentum indicators, not official fear indexes.</p>
     </div>}
   </section>;
 }
@@ -1562,7 +1569,7 @@ function HexSimulationCalculatorPanel({ open, onToggle }: { open: boolean; onTog
       <div className="hex-simulator-fields">
         <label><span>HEX to stake</span><input inputMode="decimal" value={formatInput(amount)} onChange={event => updateNumber(event.target.value, setAmount)} aria-label="Simulation HEX amount"/></label>
         <label><span>Stake length</span><div><input inputMode="decimal" value={duration} onChange={event => updateNumber(event.target.value, setDuration)} aria-label="Simulation stake duration"/><select value={unit} onChange={event => setUnit(event.target.value as 'days' | 'months' | 'years')} aria-label="Simulation duration unit"><option value="days">Days</option><option value="months">Months</option><option value="years">Years</option></select></div></label>
-        <label><span>Simulated HEX price</span><div className="simulator-money-input"><i>$</i><input inputMode="decimal" value={hexPrice} onChange={event => updateNumber(event.target.value, setHexPrice)} aria-label="Simulated HEX price"/></div></label>
+        <label><span>Simulated HEX price</span><div className="simulator-money-input"><i>$</i><input type="text" inputMode="decimal" pattern="[0-9]*[.,]?[0-9]*" enterKeyHint="done" value={hexPrice} onChange={event => updateDecimalNumber(event.target.value, setHexPrice)} aria-label="Simulated HEX price"/></div></label>
         <label><span>HEX per base T-share</span><input inputMode="decimal" value={formatInput(hexPerTShare)} onChange={event => updateNumber(event.target.value, setHexPerTShare)} aria-label="Simulated HEX per T-share"/></label>
         <label className="simulator-wide-field"><span>Daily HEX payout per T-share</span><input type="text" inputMode="decimal" pattern="[0-9]*[.,]?[0-9]*" enterKeyHint="done" value={dailyPayout} onChange={event => updateDecimalNumber(event.target.value, setDailyPayout)} aria-label="Simulated daily HEX payout per T-share"/></label>
       </div>
