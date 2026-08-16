@@ -19,7 +19,8 @@ type HexStake = { id: string; walletId: string; walletLabel: string; walletAddre
 type HexEndedStake = { id: string; walletId: string; walletLabel: string; walletAddress: string; network: ChainNetwork; stakeId: string; endedAt: number; stakedHex: number; returnedHex: number; price: number | null };
 type HexStakeState = { stakes: HexStake[]; endedStakes: HexEndedStake[]; loading: boolean; error: string; refreshedAt: number | null; network: Network };
 type HexCalculatorMetrics = { network: ChainNetwork; shareRate: number; oneTShareHex: number; dailyHexPerTShare: number; price: number | null; sampleDays: number; loading: boolean; error: string };
-type MarketSentimentState = { bitcoin: number | null; bitcoinLabel: string; ethereum: number | null; pulseChain: number | null; btcDominance: number | null; ethDominance: number | null; pulseDominance: number | null; altDominance: number | null; refreshedAt: number | null; loading: boolean; error: string };
+type HexLiquidHolding = { walletId: string; network: ChainNetwork; amount: number; value: number | null; loading: boolean };
+type MarketSentimentState = { bitcoin: number | null; bitcoinLabel: string; ethereum: number | null; pulseChain: number | null; btcDominance: number | null; ethDominance: number | null; pulseDominance: number | null; altDominance: number | null; ehexEthereumDominance: number | null; phexPulseDominance: number | null; refreshedAt: number | null; loading: boolean; error: string };
 type TokenStats = {
   price: number;
   change24h: number;
@@ -397,7 +398,7 @@ function saveSwapPriceCache(prices: Partial<Record<SwapTokenKey, number>>) {
 }
 
 function emptyMarketSentiment(): MarketSentimentState {
-  return { bitcoin: null, bitcoinLabel: '', ethereum: null, pulseChain: null, btcDominance: null, ethDominance: null, pulseDominance: null, altDominance: null, refreshedAt: null, loading: false, error: '' };
+  return { bitcoin: null, bitcoinLabel: '', ethereum: null, pulseChain: null, btcDominance: null, ethDominance: null, pulseDominance: null, altDominance: null, ehexEthereumDominance: null, phexPulseDominance: null, refreshedAt: null, loading: false, error: '' };
 }
 
 function readMarketSentimentCache(): MarketSentimentState {
@@ -857,6 +858,15 @@ async function loadPortfolio(wallet: TrackedWallet): Promise<Asset[]> {
     : []);
   if (!combined.length) throw new Error('Both network portfolio requests failed.');
   return ensureUsdcAssets(combined.sort((left, right) => (right.value ?? -1) - (left.value ?? -1)), 'Both');
+}
+
+function liquidHexHolding(assets: Asset[], network: ChainNetwork) {
+  const contract = VERIFIED_TOKEN_CONTRACTS[network]?.HEX.toLowerCase();
+  const matching = contract ? assets.filter(asset => asset.network === network && assetContract(asset) === contract) : [];
+  return matching.reduce((holding, asset) => ({
+    amount: holding.amount + Math.max(0, Number(asset.amount) || 0),
+    value: asset.value === null || holding.value === null ? null : holding.value + Math.max(0, asset.value),
+  }), { amount: 0, value: 0 as number | null });
 }
 
 async function fetchPulseStakedSupply() {
@@ -1426,11 +1436,12 @@ function momentumScore(change24h: number) {
 }
 
 async function fetchMarketSentiment(previous: MarketSentimentState): Promise<MarketSentimentState> {
-  const [fearResult, globalResult, majorsResult, pulseResult, paprikaGlobalResult, paprikaEthResult] = await Promise.allSettled([
+  const [fearResult, globalResult, majorsResult, pulseResult, ehexResult, paprikaGlobalResult, paprikaEthResult] = await Promise.allSettled([
     jsonRequest('https://api.alternative.me/fng/?limit=1', 10000),
     jsonRequest('https://api.coingecko.com/api/v3/global', 10000),
     jsonRequest('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true', 10000),
     Promise.all([fetchTokenStats(TOKEN_DATA.PLS), fetchTokenStats(TOKEN_DATA.PLSX), fetchTokenStats(TOKEN_DATA.pHEX), fetchTokenStats(TOKEN_DATA.INC), fetchTokenStats(TOKEN_DATA.PRVX)]),
+    fetchTokenStats(TOKEN_DATA.HEX),
     jsonRequest('https://api.coinpaprika.com/v1/global', 10000),
     jsonRequest('https://api.coinpaprika.com/v1/tickers/eth-ethereum', 10000),
   ]);
@@ -1438,6 +1449,7 @@ async function fetchMarketSentiment(previous: MarketSentimentState): Promise<Mar
   const global = globalResult.status === 'fulfilled' ? globalResult.value?.data : null;
   const majors = majorsResult.status === 'fulfilled' ? majorsResult.value : null;
   const pulseStats = pulseResult.status === 'fulfilled' ? pulseResult.value : [];
+  const ehexStats = ehexResult.status === 'fulfilled' ? ehexResult.value : null;
   const paprikaGlobal = paprikaGlobalResult.status === 'fulfilled' ? paprikaGlobalResult.value : null;
   const paprikaEth = paprikaEthResult.status === 'fulfilled' ? paprikaEthResult.value : null;
   const pulseChanges = pulseStats.map(stat => stat.change24h).filter(change => Number.isFinite(change));
@@ -1449,6 +1461,11 @@ async function fetchMarketSentiment(previous: MarketSentimentState): Promise<Mar
   const totalMarketCap = Number(global?.total_market_cap?.usd ?? paprikaGlobal?.market_cap_usd);
   const pulseMarketCap = pulseStats.reduce((total, stat) => total + Math.max(0, stat.marketCap) * 1_000_000, 0);
   const pulseDominance = totalMarketCap > 0 && pulseMarketCap > 0 ? pulseMarketCap / totalMarketCap * 100 : NaN;
+  const ethereumMarketCap = totalMarketCap > 0 && ethDominance > 0 ? totalMarketCap * ethDominance / 100 : NaN;
+  const ehexMarketCap = Math.max(0, ehexStats?.marketCap ?? 0) * 1_000_000;
+  const phexMarketCap = Math.max(0, pulseStats[2]?.marketCap ?? 0) * 1_000_000;
+  const ehexEthereumDominance = ethereumMarketCap > 0 && ehexMarketCap > 0 ? ehexMarketCap / ethereumMarketCap * 100 : NaN;
+  const phexPulseDominance = pulseMarketCap > 0 && phexMarketCap > 0 ? phexMarketCap / pulseMarketCap * 100 : NaN;
   const next: MarketSentimentState = {
     bitcoin: Number.isFinite(bitcoin) ? bitcoin : previous.bitcoin,
     bitcoinLabel: typeof fear?.value_classification === 'string' ? fear.value_classification : previous.bitcoinLabel,
@@ -1458,6 +1475,8 @@ async function fetchMarketSentiment(previous: MarketSentimentState): Promise<Mar
     ethDominance: Number.isFinite(ethDominance) ? ethDominance : previous.ethDominance,
     pulseDominance: Number.isFinite(pulseDominance) ? pulseDominance : previous.pulseDominance,
     altDominance: Number.isFinite(btcDominance) && Number.isFinite(ethDominance) ? Math.max(0, 100 - btcDominance - ethDominance - (Number.isFinite(pulseDominance) ? pulseDominance : 0)) : previous.altDominance,
+    ehexEthereumDominance: Number.isFinite(ehexEthereumDominance) ? ehexEthereumDominance : previous.ehexEthereumDominance,
+    phexPulseDominance: Number.isFinite(phexPulseDominance) ? phexPulseDominance : previous.phexPulseDominance,
     refreshedAt: Date.now(), loading: false,
     error: fearResult.status === 'rejected' && globalResult.status === 'rejected' && majorsResult.status === 'rejected' && pulseResult.status === 'rejected' ? 'Live sentiment sources are temporarily unavailable. Showing the last saved reading.' : '',
   };
@@ -1485,7 +1504,8 @@ function MarketSentimentPanel({ open, onToggle }: { open: boolean; onToggle: () 
     { label: 'ETH', value: state.ethDominance, color: '#7792ff' },
     { label: 'PULSECHAIN', value: state.pulseDominance, color: '#14d9ff' },
     { label: 'ALTCOINS', value: state.altDominance, color: '#d644ff' },
-    { label: 'BTC + ETH', value: state.btcDominance !== null && state.ethDominance !== null ? state.btcDominance + state.ethDominance : null, color: '#21d9d0' },
+    { label: 'eHEX / ETH', value: state.ehexEthereumDominance, color: '#ff2ca8' },
+    { label: 'pHEX / PULSE', value: state.phexPulseDominance, color: '#ff9d00' },
   ];
   const dominanceLabel = (value: number) => value > 0 && value < 0.1 ? `${value.toFixed(4)}%` : `${value.toFixed(1)}%`;
   return <section className={`sentiment-panel ${open ? 'open' : ''}`}>
@@ -1494,7 +1514,7 @@ function MarketSentimentPanel({ open, onToggle }: { open: boolean; onToggle: () 
       <div className="sentiment-meters">{meters.map(meter => <article key={meter.key}><div className="sentiment-gauge" style={{ '--sentiment-score': meter.value ?? 0, '--sentiment-color': sentimentColor(meter.value) } as React.CSSProperties}><span><strong>{meter.value === null ? '—' : Math.round(meter.value)}</strong><small>/100</small></span></div><div><small>{meter.note}</small><b>{meter.label}</b><em>{meter.detail}</em></div></article>)}</div>
       <div className="dominance-section"><div className="dominance-heading"><span><small>GLOBAL MARKET SHARE</small><b>Bitcoin, Ethereum, PulseChain & Altcoins</b></span><button type="button" onClick={() => setRefresh(value => value + 1)} disabled={state.loading}><RefreshCw size={13} className={state.loading ? 'spin-icon' : ''}/>Refresh</button></div><div className="dominance-grid">{dominance.map(item => <article key={item.label}><span><i style={{ background: item.color }}/><small>{item.label}</small></span><strong>{item.value === null ? '—' : dominanceLabel(item.value)}</strong></article>)}</div></div>
       {state.error && <p className="sentiment-error">{state.error}</p>}
-      <p className="sentiment-source">Bitcoin Fear & Greed: Alternative.me · global dominance: CoinGecko · PulseChain share: combined PLS, PLSX, pHEX, INC and PRVX market caps versus the global crypto market · ETH and PulseChain readings are transparent 24-hour momentum indicators, not official fear indexes.</p>
+      <p className="sentiment-source">Bitcoin Fear & Greed: Alternative.me · global dominance: CoinGecko · eHEX / ETH compares eHEX market cap with Ethereum market cap · pHEX / PULSE shows pHEX within the tracked PulseChain core market · ETH and PulseChain readings are transparent 24-hour momentum indicators, not official fear indexes.</p>
     </div>}
   </section>;
 }
@@ -1551,10 +1571,22 @@ function HexStakesPanel({ state, open, filter, network, walletCount, holdingsVal
   </section>;
 }
 
-function HexCalculatorPanel({ open, network, metrics, onToggle, onNetwork, onRefresh }: { open: boolean; network: ChainNetwork; metrics: HexCalculatorMetrics; onToggle: () => void; onNetwork: (network: ChainNetwork) => void; onRefresh: () => void }) {
-  const [amount, setAmount] = useState('30000');
+function editableMetric(value: number, maximumFractionDigits = 8) {
+  return Number.isFinite(value) ? value.toLocaleString('en-US', { useGrouping: false, maximumFractionDigits }) : '0';
+}
+
+function HexCalculatorPanel({ open, network, metrics, holding, onToggle, onNetwork, onRefresh }: { open: boolean; network: ChainNetwork; metrics: HexCalculatorMetrics; holding: HexLiquidHolding; onToggle: () => void; onNetwork: (network: ChainNetwork) => void; onRefresh: () => void }) {
+  const [amount, setAmount] = useState('0');
   const [duration, setDuration] = useState('2');
   const [unit, setUnit] = useState<'days' | 'months' | 'years'>('months');
+  const seededHoldingRef = useRef('');
+  useEffect(() => {
+    if (holding.loading) return;
+    const seedKey = `${holding.walletId}:${holding.network}`;
+    if (seededHoldingRef.current === seedKey) return;
+    setAmount(editableMetric(holding.amount));
+    seededHoldingRef.current = seedKey;
+  }, [holding]);
   const amountHex = Math.max(0, Number(amount.replace(/,/g, '')) || 0);
   const durationValue = Math.max(0, Number(duration) || 0);
   const rawDays = unit === 'years' ? durationValue * 365 : unit === 'months' ? durationValue * 30.4375 : durationValue;
@@ -1572,12 +1604,13 @@ function HexCalculatorPanel({ open, network, metrics, onToggle, onNetwork, onRef
         <label><span>HEX to stake</span><input inputMode="decimal" value={formattedAmount} onChange={event => { const cleaned = event.target.value.replace(/,/g, '').replace(/[^0-9.]/g, ''); const [whole, ...fractions] = cleaned.split('.'); setAmount(`${whole}${fractions.length ? `.${fractions.join('')}` : ''}`); }} aria-label="HEX amount to stake"/></label>
         <label><span>Stake length</span><div><input inputMode="decimal" value={duration} onChange={event => setDuration(event.target.value.replace(/[^0-9.]/g, ''))} aria-label="Stake duration"/><select value={unit} onChange={event => setUnit(event.target.value as 'days' | 'months' | 'years')} aria-label="Stake duration unit"><option value="days">Days</option><option value="months">Months</option><option value="years">Years</option></select></div></label>
       </div>
+      <div className="hex-calculator-input-value"><span><small>HEX TO STAKE VALUE</small><strong className="hex-dollar-value">{metrics.price ? money(amountHex * metrics.price) : 'Live HEX value unavailable'}</strong></span><span><small>LIQUID {network === 'PulseChain' ? 'pHEX' : 'HEX'} IN SELECTED WALLET</small><strong>{holding.loading ? 'Reading…' : `${compactAmount(String(holding.amount), 2)} ${network === 'PulseChain' ? 'pHEX' : 'HEX'}`}</strong></span></div>
       {metrics.loading ? <div className="hex-calculator-status"><RefreshCw size={18} className="spin-icon"/>Reading live HEX share rate and payouts…</div> : metrics.error ? <div className="hex-calculator-status error-message">{metrics.error}<button type="button" onClick={onRefresh}>Try again</button></div> : result ? <>
         <div className="hex-calculator-share"><span><small>HEX FOR 1 BASE T-SHARE</small><strong>{compactAmount(String(metrics.oneTShareHex), 2)} HEX</strong></span><span><small>DAILY HEX / T-SHARE</small><strong>{metrics.dailyHexPerTShare.toLocaleString(undefined, { maximumFractionDigits: 3 })} HEX</strong></span><span><small>LIVE SHARE RATE</small><strong>{metrics.shareRate.toLocaleString()}</strong></span></div>
         <div className="hex-calculator-results">
           <div><small>ESTIMATED T-SHARES</small><strong>{result.tShares.toLocaleString(undefined, { maximumFractionDigits: 4 })}</strong><em>{result.bonusPercent.toFixed(2)}% stake bonus</em></div>
-          <div><small>ESTIMATED YIELD</small><strong>{compactAmount(String(result.estimatedYield), 2)} HEX</strong><em>{metrics.price ? money(result.estimatedYield * metrics.price) : 'Live HEX value unavailable'}</em></div>
-          <div><small>ESTIMATED RETURN</small><strong>{compactAmount(String(result.estimatedReturn), 2)} HEX</strong><em>Principal + estimated yield</em></div>
+          <div><small>ESTIMATED YIELD</small><strong>{compactAmount(String(result.estimatedYield), 2)} HEX</strong><em className="hex-dollar-value">{metrics.price ? money(result.estimatedYield * metrics.price) : 'Live HEX value unavailable'}</em></div>
+          <div><small>ESTIMATED RETURN</small><strong>{compactAmount(String(result.estimatedReturn), 2)} HEX</strong><em className="hex-dollar-value">{metrics.price ? money(result.estimatedReturn * metrics.price) : 'Live HEX value unavailable'}</em></div>
           <div><small>ESTIMATED END DATE</small><strong>{endDate}</strong><em>{days.toLocaleString()} days · max 5,555</em></div>
         </div>
         <p className="hex-calculator-note"><ShieldCheck size={13}/>Share count uses the verified {network} HEX contract formula and current share rate. Yield uses the average payout from the last {metrics.sampleDays} completed on-chain days. Future daily payouts, global T-shares and HEX price can change, so this is an estimate—not a guaranteed return.</p>
@@ -1586,13 +1619,24 @@ function HexCalculatorPanel({ open, network, metrics, onToggle, onNetwork, onRef
   </section>;
 }
 
-function HexSimulationCalculatorPanel({ open, onToggle }: { open: boolean; onToggle: () => void }) {
-  const [amount, setAmount] = useState('30000');
+function HexSimulationCalculatorPanel({ open, network, metrics, holding, onToggle, onNetwork }: { open: boolean; network: ChainNetwork; metrics: HexCalculatorMetrics; holding: HexLiquidHolding; onToggle: () => void; onNetwork: (network: ChainNetwork) => void }) {
+  const [amount, setAmount] = useState('0');
   const [duration, setDuration] = useState('1');
   const [unit, setUnit] = useState<'days' | 'months' | 'years'>('years');
-  const [hexPrice, setHexPrice] = useState('0.01');
-  const [hexPerTShare, setHexPerTShare] = useState('30000');
-  const [dailyPayout, setDailyPayout] = useState('6.5');
+  const [hexPrice, setHexPrice] = useState('0');
+  const [hexPerTShare, setHexPerTShare] = useState('0');
+  const [dailyPayout, setDailyPayout] = useState('0');
+  const seededSimulationRef = useRef('');
+  useEffect(() => {
+    if (metrics.loading || metrics.error || holding.loading || metrics.network !== network || holding.network !== network) return;
+    const seedKey = `${holding.walletId}:${network}`;
+    if (seededSimulationRef.current === seedKey) return;
+    setAmount(editableMetric(holding.amount));
+    setHexPrice(editableMetric(metrics.price ?? 0, 12));
+    setHexPerTShare(editableMetric(metrics.oneTShareHex, 6));
+    setDailyPayout(editableMetric(metrics.dailyHexPerTShare, 6));
+    seededSimulationRef.current = seedKey;
+  }, [holding, metrics, network]);
   const cleanNumber = (value: string) => Math.max(0, Number(value.replace(/,/g, '')) || 0);
   const formatInput = (value: string) => { const [whole, fraction] = value.split('.'); return `${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}${fraction !== undefined ? `.${fraction}` : ''}`; };
   const updateNumber = (value: string, setter: (value: string) => void) => { const cleaned = value.replace(/,/g, '').replace(/[^0-9.]/g, ''); const [whole, ...fraction] = cleaned.split('.'); setter(`${whole}${fraction.length ? `.${fraction.join('')}` : ''}`); };
@@ -1603,7 +1647,7 @@ function HexSimulationCalculatorPanel({ open, onToggle }: { open: boolean; onTog
   const simulatedPrice = cleanNumber(hexPrice);
   const oneTShareHex = cleanNumber(hexPerTShare);
   const payout = cleanNumber(dailyPayout);
-  const simulationMetrics: HexCalculatorMetrics = { network: 'PulseChain', shareRate: oneTShareHex * 10, oneTShareHex, dailyHexPerTShare: payout, price: simulatedPrice, sampleDays: 0, loading: false, error: '' };
+  const simulationMetrics: HexCalculatorMetrics = { network, shareRate: oneTShareHex * 10, oneTShareHex, dailyHexPerTShare: payout, price: simulatedPrice, sampleDays: 0, loading: false, error: '' };
   const result = calculateHexStake(amountHex, days, simulationMetrics);
   const endDate = new Date(Date.now() + days * 86_400_000).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
   return <section className={`hex-simulator-panel ${open ? 'open' : ''}`}>
@@ -1611,7 +1655,8 @@ function HexSimulationCalculatorPanel({ open, onToggle }: { open: boolean; onTog
       <span className="hex-simulator-title"><i><FlaskConical size={22}/></i><span><small>MANUAL FUTURE SCENARIO</small><b>HEX Calculator Simulation</b></span></span><ChevronDown size={17}/>
     </button>
     {open && <div className="hex-simulator-body">
-      <p className="hex-simulator-intro">Enter your own future HEX price, share rate and payout assumptions. Nothing below changes the live calculator.</p>
+      <p className="hex-simulator-intro">Defaults use the current {network} wallet balance, live HEX price, on-chain share rate and recent on-chain payout. Every value remains editable for your own scenario.</p>
+      <div className="hex-calculator-network" role="group" aria-label="HEX simulation network">{(['Ethereum', 'PulseChain'] as ChainNetwork[]).map(option => <button type="button" key={option} className={network === option ? 'active' : ''} aria-pressed={network === option} onClick={() => onNetwork(option)}>{option}</button>)}</div>
       <div className="hex-simulator-fields">
         <label><span>HEX to stake</span><input inputMode="decimal" value={formatInput(amount)} onChange={event => updateNumber(event.target.value, setAmount)} aria-label="Simulation HEX amount"/></label>
         <label><span>Stake length</span><div><input inputMode="decimal" value={duration} onChange={event => updateNumber(event.target.value, setDuration)} aria-label="Simulation stake duration"/><select value={unit} onChange={event => setUnit(event.target.value as 'days' | 'months' | 'years')} aria-label="Simulation duration unit"><option value="days">Days</option><option value="months">Months</option><option value="years">Years</option></select></div></label>
@@ -1619,11 +1664,12 @@ function HexSimulationCalculatorPanel({ open, onToggle }: { open: boolean; onTog
         <label><span>HEX per base T-share</span><input inputMode="decimal" value={formatInput(hexPerTShare)} onChange={event => updateNumber(event.target.value, setHexPerTShare)} aria-label="Simulated HEX per T-share"/></label>
         <label className="simulator-wide-field"><span>Daily HEX payout per T-share</span><input type="text" inputMode="decimal" pattern="[0-9]*[.,]?[0-9]*" enterKeyHint="done" value={dailyPayout} onChange={event => updateDecimalNumber(event.target.value, setDailyPayout)} aria-label="Simulated daily HEX payout per T-share"/></label>
       </div>
+      <div className="hex-simulator-input-value"><span><small>HEX TO STAKE VALUE</small><strong className="hex-dollar-value">{simulatedPrice > 0 ? money(amountHex * simulatedPrice) : 'Enter a simulated price'}</strong></span><span><small>LIVE DEFAULT SOURCE</small><strong>{network === 'PulseChain' ? 'pHEX · PulseChain' : 'HEX · Ethereum'}</strong></span></div>
       {result ? <div className="hex-simulator-results">
         <div><small>ESTIMATED T-SHARES</small><strong>{result.tShares.toLocaleString(undefined, { maximumFractionDigits: 4 })}</strong><em>{result.bonusPercent.toFixed(2)}% stake bonus</em></div>
-        <div><small>ESTIMATED YIELD</small><strong>{compactAmount(String(result.estimatedYield), 2)} HEX</strong><em>Using {payout.toLocaleString()} HEX / T-share / day</em></div>
-        <div><small>ESTIMATED RETURN</small><strong>{compactAmount(String(result.estimatedReturn), 2)} HEX</strong><em>Principal + simulated yield</em></div>
-        <div><small>SIMULATED END VALUE</small><strong className="simulator-usd-value">{money(result.estimatedReturn * simulatedPrice)}</strong><em>At {money(simulatedPrice)} per HEX</em></div>
+        <div><small>ESTIMATED YIELD</small><strong>{compactAmount(String(result.estimatedYield), 2)} HEX</strong><em className="hex-dollar-value">{simulatedPrice > 0 ? money(result.estimatedYield * simulatedPrice) : 'Enter a simulated price'}</em></div>
+        <div><small>ESTIMATED RETURN</small><strong>{compactAmount(String(result.estimatedReturn), 2)} HEX</strong><em className="hex-dollar-value">{simulatedPrice > 0 ? money(result.estimatedReturn * simulatedPrice) : 'Enter a simulated price'}</em></div>
+        <div><small>SIMULATED END VALUE</small><strong className="simulator-usd-value">{money(result.estimatedReturn * simulatedPrice)}</strong><em className="hex-dollar-value">At {money(simulatedPrice)} per HEX</em></div>
         <div className="simulator-end-date"><small>ESTIMATED END DATE</small><strong>{endDate}</strong><em>{days.toLocaleString()} days</em></div>
       </div> : <div className="hex-calculator-status">Enter positive values to build a simulation.</div>}
       <p className="hex-simulator-note"><Info size={13}/>This is a user-defined scenario, not a prediction. Real future share rate, daily payouts and HEX price can differ substantially.</p>
@@ -1655,6 +1701,7 @@ function App() {
   const [hexCalculatorNetwork, setHexCalculatorNetwork] = useState<ChainNetwork>(() => readNetwork() === 'Ethereum' ? 'Ethereum' : 'PulseChain');
   const [hexCalculatorRefresh, setHexCalculatorRefresh] = useState(0);
   const [hexCalculatorMetrics, setHexCalculatorMetrics] = useState<HexCalculatorMetrics>({ network: readNetwork() === 'Ethereum' ? 'Ethereum' : 'PulseChain', shareRate: 0, oneTShareHex: 0, dailyHexPerTShare: 0, price: null, sampleDays: 0, loading: true, error: '' });
+  const [hexCalculatorHolding, setHexCalculatorHolding] = useState<HexLiquidHolding>({ walletId: '', network: readNetwork() === 'Ethereum' ? 'Ethereum' : 'PulseChain', amount: 0, value: null, loading: false });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>(null);
   const [settingsTransparency, setSettingsTransparency] = useState(readSettingsTransparency);
@@ -1971,6 +2018,24 @@ function App() {
     window.location.replace(nextUrl.toString());
   };
   const selectedWallet = wallets.find(wallet => wallet.id === selectedId) ?? wallets[0];
+  const selectedCalculatorWalletKey = selectedWallet ? `${selectedWallet.id}:${selectedWallet.address.toLowerCase()}` : '';
+  useEffect(() => {
+    if (!selectedWallet) {
+      setHexCalculatorHolding({ walletId: '', network: hexCalculatorNetwork, amount: 0, value: 0, loading: false });
+      return;
+    }
+    let cancelled = false;
+    const walletId = selectedWallet.id;
+    setHexCalculatorHolding(current => ({ walletId, network: hexCalculatorNetwork, amount: current.walletId === walletId && current.network === hexCalculatorNetwork ? current.amount : 0, value: current.walletId === walletId && current.network === hexCalculatorNetwork ? current.value : null, loading: true }));
+    void loadChainPortfolio(selectedWallet.address, hexCalculatorNetwork).then(assets => {
+      if (cancelled) return;
+      const holding = liquidHexHolding(assets, hexCalculatorNetwork);
+      setHexCalculatorHolding({ walletId, network: hexCalculatorNetwork, ...holding, loading: false });
+    }).catch(() => {
+      if (!cancelled) setHexCalculatorHolding({ walletId, network: hexCalculatorNetwork, amount: 0, value: null, loading: false });
+    });
+    return () => { cancelled = true; };
+  }, [selectedCalculatorWalletKey, hexCalculatorNetwork, hexCalculatorRefresh]);
   const selectedExplorerNetwork: ChainNetwork = network === 'Ethereum' || (network === 'Both' && selectedWallet?.network === 'Ethereum') ? 'Ethereum' : 'PulseChain';
   const selectHexStakeNetwork = (scope: Network) => {
     hexStakeNetworkRef.current = scope;
@@ -2192,8 +2257,8 @@ function App() {
 
       {wallets.length > 0 && <HexStakesPanel state={hexStakeState} open={hexStakesOpen} filter={hexStakeFilter} network={hexStakeNetwork} walletCount={wallets.length} holdingsValue={hexHoldingState.network === hexStakeNetwork ? hexHoldingState.value : 0} holdingsLoading={hexHoldingState.network !== hexStakeNetwork || hexHoldingState.loading} privateMode={privateMode} onToggle={() => setHexStakesOpen(value => !value)} onFilter={setHexStakeFilter} onNetwork={selectHexStakeNetwork} onRefresh={() => setHexStakeRefresh(value => value + 1)}/>}
 
-      <HexCalculatorPanel open={hexCalculatorOpen} network={hexCalculatorNetwork} metrics={hexCalculatorMetrics} onToggle={() => setHexCalculatorOpen(value => !value)} onNetwork={setHexCalculatorNetwork} onRefresh={() => setHexCalculatorRefresh(value => value + 1)}/>
-      <HexSimulationCalculatorPanel open={hexSimulatorOpen} onToggle={() => setHexSimulatorOpen(value => !value)}/>
+      <HexCalculatorPanel open={hexCalculatorOpen} network={hexCalculatorNetwork} metrics={hexCalculatorMetrics} holding={hexCalculatorHolding} onToggle={() => setHexCalculatorOpen(value => !value)} onNetwork={setHexCalculatorNetwork} onRefresh={() => setHexCalculatorRefresh(value => value + 1)}/>
+      <HexSimulationCalculatorPanel open={hexSimulatorOpen} network={hexCalculatorNetwork} metrics={hexCalculatorMetrics} holding={hexCalculatorHolding} onToggle={() => setHexSimulatorOpen(value => !value)} onNetwork={setHexCalculatorNetwork}/>
       <MarketSentimentPanel open={sentimentOpen} onToggle={() => setSentimentOpen(value => !value)}/>
 
       {wallets.length === 0 && <section className="next-preview"><p className="eyebrow">WHAT COMES NEXT</p><h2>Your wallet becomes a living dashboard.</h2><div className="preview-panels"><div/><div/><div/></div><p>Token panels inspired by your reference design will appear here after we connect live portfolio data.</p></section>}
