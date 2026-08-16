@@ -124,6 +124,7 @@ const WRAPPED_NATIVE: Record<ChainNetwork, string> = {
   PulseChain: '0xA1077a294dDe1B09bB078844Df40758a5D0f9a27',
   Ethereum: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
 };
+const PDAI_ICON_URL = 'https://cdn.dexscreener.com/cms/images/f5d7803513d354423216d2e075a923570577681f0a877bde8e7e3a0f56d0ca1d?width=800&height=800&quality=95&format=auto';
 const VERIFIED_TOKEN_CONTRACTS: Partial<Record<ChainNetwork, Record<string, string>>> = {
   Ethereum: {
     HEX: '0x2B591e99afE9f32eAA6214f7B7629768c40Eeb39',
@@ -187,7 +188,7 @@ const CORE_ICONS: Record<string, string> = {
   ICSA: `${import.meta.env.BASE_URL}token-icons/icsa.png`,
   ASIC: `${import.meta.env.BASE_URL}token-icons/asic.png`,
   PDA: `${import.meta.env.BASE_URL}token-icons/pda.png`,
-  PDAI: `${import.meta.env.BASE_URL}token-icons/pdai.svg`,
+  PDAI: PDAI_ICON_URL,
   PDI: `${import.meta.env.BASE_URL}token-icons/pdi.png`,
   PRVX: `${import.meta.env.BASE_URL}token-icons/prvx.png`,
 };
@@ -302,7 +303,6 @@ const SWAP_TOKENS = [
   { id: 'ICSA_PULSE', symbol: 'ICSA', network: 'PulseChain', source: 'ICSA_PULSE' },
   { id: 'ICSA_ETH', symbol: 'ICSA', network: 'Ethereum', source: 'ICSA_ETH' },
   { id: 'ASIC_PULSE', symbol: 'ASIC', network: 'PulseChain', source: 'ASIC_PULSE' },
-  { id: 'PDI_PULSE', symbol: 'PDI', network: 'PulseChain', source: 'PDI_PULSE' },
   { id: 'WETH_PULSE', symbol: 'WETH', network: 'PulseChain', source: 'ETH' },
   { id: 'ETH', symbol: 'ETH', network: 'Ethereum', source: 'ETH' },
   { id: 'HEX', symbol: 'HEX', network: 'Ethereum', source: 'HEX' },
@@ -758,6 +758,40 @@ async function ethereumOraclePrice() {
   } catch { return null; }
 }
 
+function dexPairTokenPrice(pair: any, targetAddress: string) {
+  const base = String(pair?.baseToken?.address ?? '').toLowerCase();
+  const quote = String(pair?.quoteToken?.address ?? '').toLowerCase();
+  const baseUsd = Number(pair?.priceUsd ?? 0);
+  const quotePerBase = Number(pair?.priceNative ?? 0);
+  if (base === targetAddress && baseUsd > 0) return baseUsd;
+  if (quote === targetAddress && baseUsd > 0 && quotePerBase > 0) return baseUsd / quotePerBase;
+  return 0;
+}
+
+function aggregateDexTokenMarket(pairs: any[], targetAddress: string) {
+  const priced = pairs.flatMap(pair => {
+    const price = dexPairTokenPrice(pair, targetAddress);
+    const liquidity = Math.max(0, Number(pair?.liquidity?.usd ?? 0));
+    return price > 0 && Number.isFinite(price) ? [{ pair, price, liquidity }] : [];
+  });
+  if (!priced.length) return null;
+  const liquid = priced.filter(item => item.liquidity > 0);
+  const candidates = liquid.length ? liquid : priced;
+  const totalWeight = candidates.reduce((total, item) => total + (item.liquidity || 1), 0);
+  const price = candidates.reduce((total, item) => total + item.price * (item.liquidity || 1), 0) / totalWeight;
+  const mostLiquid = [...candidates].sort((left, right) => right.liquidity - left.liquidity)[0];
+  const targetIsBase = String(mostLiquid.pair?.baseToken?.address ?? '').toLowerCase() === targetAddress;
+  const image = targetIsBase && typeof mostLiquid.pair?.info?.imageUrl === 'string' ? mostLiquid.pair.info.imageUrl : null;
+  return { price, icon: image };
+}
+
+const PULSECHAIN_PRIORITY_PRICE_CONTRACTS = new Set([
+  VERIFIED_TOKEN_CONTRACTS.PulseChain!.WPLS,
+  VERIFIED_TOKEN_CONTRACTS.PulseChain!.HDRN,
+  VERIFIED_TOKEN_CONTRACTS.PulseChain!.ICSA,
+  VERIFIED_TOKEN_CONTRACTS.PulseChain!.PDAI,
+].map(contract => contract.toLowerCase()));
+
 async function enrichMarketAssets(assets: Asset[], network: ChainNetwork) {
   const chainId = network === 'PulseChain' ? 'pulsechain' : 'ethereum';
   const prioritized = [...assets.filter(asset => FEATURED_SYMBOLS.has(tokenKey(displayAssetSymbol(asset)))), ...assets];
@@ -766,13 +800,28 @@ async function enrichMarketAssets(assets: Asset[], network: ChainNetwork) {
   const contracts = unique.map(asset => ({ asset, contract: asset.native ? WRAPPED_NATIVE[network] : asset.id })).filter(item => validAddress(item.contract));
   try {
     const data = await jsonRequest(`https://api.dexscreener.com/latest/dex/tokens/${contracts.map(item => item.contract).join(',')}`, 10000);
-    const pairs = (Array.isArray(data.pairs) ? data.pairs : []).filter((pair: any) => pair.chainId === chainId && Number(pair.priceUsd) > 0);
+    const pairs = (Array.isArray(data.pairs) ? data.pairs : []).filter((pair: any) => pair.chainId === chainId);
     for (const item of contracts) {
-      const pair = pairs.filter((candidate: any) => candidate.baseToken?.address?.toLowerCase() === item.contract.toLowerCase())
-        .sort((left: any, right: any) => Number(right.liquidity?.usd ?? 0) - Number(left.liquidity?.usd ?? 0))[0];
-      if (pair) enriched.set(item.asset.id, { price: Number(pair.priceUsd), icon: typeof pair.info?.imageUrl === 'string' ? pair.info.imageUrl : null });
+      const targetAddress = item.contract.toLowerCase();
+      const market = aggregateDexTokenMarket(pairs.filter((candidate: any) => {
+        const base = String(candidate?.baseToken?.address ?? '').toLowerCase();
+        const quote = String(candidate?.quoteToken?.address ?? '').toLowerCase();
+        return base === targetAddress || quote === targetAddress;
+      }), targetAddress);
+      if (market) enriched.set(item.asset.id, market);
     }
   } catch { /* GeckoTerminal is the next DEX-data source. */ }
+  if (network === 'PulseChain') {
+    const priorityMissing = contracts.filter(item => !enriched.has(item.asset.id) && PULSECHAIN_PRIORITY_PRICE_CONTRACTS.has(item.contract.toLowerCase()));
+    const priorityResults = await Promise.allSettled(priorityMissing.map(async item => {
+      const data = await jsonRequest(`https://api.dexscreener.com/latest/dex/tokens/${item.contract}`, 10000, 3);
+      const pairs = (Array.isArray(data?.pairs) ? data.pairs : []).filter((pair: any) => pair.chainId === chainId);
+      return { item, market: aggregateDexTokenMarket(pairs, item.contract.toLowerCase()) };
+    }));
+    priorityResults.forEach(result => {
+      if (result.status === 'fulfilled' && result.value.market) enriched.set(result.value.item.asset.id, result.value.market);
+    });
+  }
   const missing = contracts.filter(item => !enriched.has(item.asset.id));
   if (missing.length) {
     try {
@@ -803,6 +852,16 @@ async function enrichMarketAssets(assets: Asset[], network: ChainNetwork) {
     if (!market) return asset;
     return { ...asset, price: market.price, value: Number(asset.amount) * market.price, icon: market.icon || asset.icon };
   }).sort((left, right) => (right.value ?? -1) - (left.value ?? -1));
+}
+
+function preserveKnownAssetPrices(assets: Asset[], previousAssets: Asset[]) {
+  const previous = new Map(previousAssets.filter(asset => asset.price !== null && asset.price > 0).map(asset => [`${asset.network}:${assetContract(asset)}`, asset]));
+  return assets.map(asset => {
+    if (asset.price !== null && asset.price > 0) return asset;
+    const saved = previous.get(`${asset.network}:${assetContract(asset)}`);
+    if (!saved?.price) return asset;
+    return { ...asset, price: saved.price, value: Number(asset.amount) * saved.price, icon: asset.icon || saved.icon };
+  });
 }
 
 async function loadChainPortfolio(address: string, network: ChainNetwork): Promise<Asset[]> {
@@ -1574,6 +1633,9 @@ function HexStakesPanel({ state, open, filter, network, walletCount, holdingsVal
 function editableMetric(value: number, maximumFractionDigits = 8) {
   return Number.isFinite(value) ? value.toLocaleString('en-US', { useGrouping: false, maximumFractionDigits }) : '0';
 }
+function editableWholeUnits(value: number) {
+  return Number.isFinite(value) ? String(Math.floor(Math.max(0, value))) : '0';
+}
 
 function HexCalculatorPanel({ open, network, metrics, holding, onToggle, onNetwork, onRefresh }: { open: boolean; network: ChainNetwork; metrics: HexCalculatorMetrics; holding: HexLiquidHolding; onToggle: () => void; onNetwork: (network: ChainNetwork) => void; onRefresh: () => void }) {
   const [amount, setAmount] = useState('0');
@@ -1584,7 +1646,7 @@ function HexCalculatorPanel({ open, network, metrics, holding, onToggle, onNetwo
     if (holding.loading) return;
     const seedKey = `${holding.walletId}:${holding.network}`;
     if (seededHoldingRef.current === seedKey) return;
-    setAmount(editableMetric(holding.amount));
+    setAmount(editableWholeUnits(holding.amount));
     seededHoldingRef.current = seedKey;
   }, [holding]);
   const amountHex = Math.max(0, Number(amount.replace(/,/g, '')) || 0);
@@ -1601,11 +1663,11 @@ function HexCalculatorPanel({ open, network, metrics, holding, onToggle, onNetwo
     {open && <div className="hex-calculator-body">
       <div className="hex-calculator-network" role="group" aria-label="HEX calculator network">{(['Ethereum', 'PulseChain'] as ChainNetwork[]).map(option => <button type="button" key={option} className={network === option ? 'active' : ''} aria-pressed={network === option} onClick={() => onNetwork(option)}>{option}</button>)}</div>
       <div className="hex-calculator-fields">
-        <label><span>HEX to stake</span><input inputMode="decimal" value={formattedAmount} onChange={event => { const cleaned = event.target.value.replace(/,/g, '').replace(/[^0-9.]/g, ''); const [whole, ...fractions] = cleaned.split('.'); setAmount(`${whole}${fractions.length ? `.${fractions.join('')}` : ''}`); }} aria-label="HEX amount to stake"/></label>
+        <label><span>HEX to stake</span><input inputMode="numeric" value={formattedAmount} onChange={event => setAmount(event.target.value.replace(/[^0-9]/g, ''))} aria-label="HEX amount to stake"/></label>
         <label><span>Stake length</span><div><input inputMode="decimal" value={duration} onChange={event => setDuration(event.target.value.replace(/[^0-9.]/g, ''))} aria-label="Stake duration"/><select value={unit} onChange={event => setUnit(event.target.value as 'days' | 'months' | 'years')} aria-label="Stake duration unit"><option value="days">Days</option><option value="months">Months</option><option value="years">Years</option></select></div></label>
       </div>
       <div className="hex-calculator-input-value"><span><small>HEX TO STAKE VALUE</small><strong className="hex-dollar-value">{metrics.price ? money(amountHex * metrics.price) : 'Live HEX value unavailable'}</strong></span><span><small>LIQUID {network === 'PulseChain' ? 'pHEX' : 'HEX'} IN SELECTED WALLET</small><strong>{holding.loading ? 'Reading…' : `${compactAmount(String(holding.amount), 2)} ${network === 'PulseChain' ? 'pHEX' : 'HEX'}`}</strong></span></div>
-      {metrics.loading ? <div className="hex-calculator-status"><RefreshCw size={18} className="spin-icon"/>Reading live HEX share rate and payouts…</div> : metrics.error ? <div className="hex-calculator-status error-message">{metrics.error}<button type="button" onClick={onRefresh}>Try again</button></div> : result ? <>
+      {metrics.loading || holding.loading ? <div className="hex-calculator-status hex-live-loading"><span><RefreshCw size={18} className="spin-icon"/>Reading live HEX balance, share rate and payouts…</span><div className="hex-loading-track" aria-label="Loading live HEX calculator data"><i/></div></div> : metrics.error ? <div className="hex-calculator-status error-message">{metrics.error}<button type="button" onClick={onRefresh}>Try again</button></div> : result ? <>
         <div className="hex-calculator-share"><span><small>HEX FOR 1 BASE T-SHARE</small><strong>{compactAmount(String(metrics.oneTShareHex), 2)} HEX</strong></span><span><small>DAILY HEX / T-SHARE</small><strong>{metrics.dailyHexPerTShare.toLocaleString(undefined, { maximumFractionDigits: 3 })} HEX</strong></span><span><small>LIVE SHARE RATE</small><strong>{metrics.shareRate.toLocaleString()}</strong></span></div>
         <div className="hex-calculator-results">
           <div><small>ESTIMATED T-SHARES</small><strong>{result.tShares.toLocaleString(undefined, { maximumFractionDigits: 4 })}</strong><em>{result.bonusPercent.toFixed(2)}% stake bonus</em></div>
@@ -1631,7 +1693,7 @@ function HexSimulationCalculatorPanel({ open, network, metrics, holding, onToggl
     if (metrics.loading || metrics.error || holding.loading || metrics.network !== network || holding.network !== network) return;
     const seedKey = `${holding.walletId}:${network}`;
     if (seededSimulationRef.current === seedKey) return;
-    setAmount(editableMetric(holding.amount));
+    setAmount(editableWholeUnits(holding.amount));
     setHexPrice(editableMetric(metrics.price ?? 0, 12));
     setHexPerTShare(editableMetric(metrics.oneTShareHex, 6));
     setDailyPayout(editableMetric(metrics.dailyHexPerTShare, 6));
@@ -1640,6 +1702,7 @@ function HexSimulationCalculatorPanel({ open, network, metrics, holding, onToggl
   const cleanNumber = (value: string) => Math.max(0, Number(value.replace(/,/g, '')) || 0);
   const formatInput = (value: string) => { const [whole, fraction] = value.split('.'); return `${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}${fraction !== undefined ? `.${fraction}` : ''}`; };
   const updateNumber = (value: string, setter: (value: string) => void) => { const cleaned = value.replace(/,/g, '').replace(/[^0-9.]/g, ''); const [whole, ...fraction] = cleaned.split('.'); setter(`${whole}${fraction.length ? `.${fraction.join('')}` : ''}`); };
+  const updateWholeNumber = (value: string, setter: (value: string) => void) => setter(value.replace(/[^0-9]/g, ''));
   const updateDecimalNumber = (value: string, setter: (value: string) => void) => { const cleaned = value.replace(',', '.').replace(/[^0-9.]/g, ''); const [whole, ...fraction] = cleaned.split('.'); setter(`${whole}${fraction.length ? `.${fraction.join('')}` : ''}`); };
   const amountHex = cleanNumber(amount);
   const durationValue = cleanNumber(duration);
@@ -1657,8 +1720,9 @@ function HexSimulationCalculatorPanel({ open, network, metrics, holding, onToggl
     {open && <div className="hex-simulator-body">
       <p className="hex-simulator-intro">Defaults use the current {network} wallet balance, live HEX price, on-chain share rate and recent on-chain payout. Every value remains editable for your own scenario.</p>
       <div className="hex-calculator-network" role="group" aria-label="HEX simulation network">{(['Ethereum', 'PulseChain'] as ChainNetwork[]).map(option => <button type="button" key={option} className={network === option ? 'active' : ''} aria-pressed={network === option} onClick={() => onNetwork(option)}>{option}</button>)}</div>
+      {(metrics.loading || holding.loading) && <div className="hex-simulator-loading"><span><RefreshCw size={18} className="spin-icon"/>Loading live calculator defaults…</span><div className="hex-loading-track" aria-label="Loading live HEX simulation defaults"><i/></div></div>}
       <div className="hex-simulator-fields">
-        <label><span>HEX to stake</span><input inputMode="decimal" value={formatInput(amount)} onChange={event => updateNumber(event.target.value, setAmount)} aria-label="Simulation HEX amount"/></label>
+        <label><span>HEX to stake</span><input inputMode="numeric" value={formatInput(amount)} onChange={event => updateWholeNumber(event.target.value, setAmount)} aria-label="Simulation HEX amount"/></label>
         <label><span>Stake length</span><div><input inputMode="decimal" value={duration} onChange={event => updateNumber(event.target.value, setDuration)} aria-label="Simulation stake duration"/><select value={unit} onChange={event => setUnit(event.target.value as 'days' | 'months' | 'years')} aria-label="Simulation duration unit"><option value="days">Days</option><option value="months">Months</option><option value="years">Years</option></select></div></label>
         <label><span>Simulated HEX price</span><div className="simulator-money-input"><i>$</i><input type="text" inputMode="decimal" pattern="[0-9]*[.,]?[0-9]*" enterKeyHint="done" value={hexPrice} onChange={event => updateDecimalNumber(event.target.value, setHexPrice)} aria-label="Simulated HEX price"/></div></label>
         <label><span>HEX per base T-share</span><input inputMode="decimal" value={formatInput(hexPerTShare)} onChange={event => updateNumber(event.target.value, setHexPerTShare)} aria-label="Simulated HEX per T-share"/></label>
@@ -1919,13 +1983,15 @@ function App() {
   const refreshWallet = async (wallet: TrackedWallet, requestedNetwork: Network = network) => {
     portfolioRequestRef.current[wallet.id] = requestedNetwork;
     const saved = cachedPortfolio(wallet.id, requestedNetwork);
+    const previousPortfolio = portfolios[wallet.id]?.network === requestedNetwork ? portfolios[wallet.id] : saved;
     setPortfolios(current => {
       const currentPortfolio = current[wallet.id]?.network === requestedNetwork ? current[wallet.id] : undefined;
       const fallback = currentPortfolio ?? saved;
       return { ...current, [wallet.id]: { assets: ensureUsdcAssets(fallback?.assets ?? [], requestedNetwork), loading: true, error: '', refreshedAt: fallback?.refreshedAt ?? null, network: requestedNetwork } };
     });
     try {
-      const assets = await loadPortfolio({ ...wallet, network: requestedNetwork });
+      const liveAssets = await loadPortfolio({ ...wallet, network: requestedNetwork });
+      const assets = preserveKnownAssetPrices(liveAssets, previousPortfolio?.assets ?? []);
       if (portfolioRequestRef.current[wallet.id] !== requestedNetwork) return;
       const nextPortfolio: Portfolio = { assets, loading: false, error: '', refreshedAt: Date.now(), network: requestedNetwork };
       savePortfolioCache(wallet.id, nextPortfolio);
