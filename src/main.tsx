@@ -117,7 +117,7 @@ const UI_COPY = {
   es: { hero: '', privateView: 'Cartera privada.', subtitle: 'Sigue tus carteras de PulseChain y Ethereum desde un panel móvil de solo lectura.', noConnection: 'Sin conexión de cartera', noSeed: 'Sin frase semilla', builtFor: 'CREADO PARA EL ECOSISTEMA', addAddress: 'AÑADIR UNA DIRECCIÓN', enterAddress: 'Introduce una dirección pública', privateWatchlist: 'LISTA PRIVADA', trackedWallets: 'Tus carteras seguidas', reveal: 'Mostrar', hide: 'Ocultar', totalPortfolio: 'CARTERA TOTAL', syncing: 'Sincronizando…', syncAll: 'Sincronizar todo', address: 'dirección', addresses: 'direcciones', showCards: 'Mostrar tarjetas', hideCards: 'Ocultar tarjetas', liveAssets: 'Activos en directo', selectedAddress: 'DIRECCIÓN SELECCIONADA', showDust: 'Mostrar polvo', hideDust: 'Ocultar polvo', organize: 'ORGANIZA TU LISTA', createAnother: 'Crear otra cartera', createdWallets: 'Carteras creadas', allocation: 'Distribución de la cartera', allocationEyebrow: 'MEZCLA DE CRIPTOMONEDAS', noAllocation: 'Todavía no hay activos con precio para esta cartera.', settings: 'Ajustes', language: 'Idioma', refresh: 'Actualizar', footer: 'Seguimiento de cartera de solo lectura' },
   nl: { hero: '', privateView: 'Privé walletportfolio.', subtitle: 'Volg je PulseChain- en Ethereum-wallets in één mobiel, alleen-lezen dashboard.', noConnection: 'Geen walletverbinding', noSeed: 'Geen herstelzin', builtFor: 'GEBOUWD VOOR HET ECOSYSTEEM', addAddress: 'ADRES TOEVOEGEN', enterAddress: 'Voer een openbaar adres in', privateWatchlist: 'PRIVÉVOLGLIJST', trackedWallets: 'Je gevolgde wallets', reveal: 'Tonen', hide: 'Verbergen', totalPortfolio: 'TOTALE PORTFOLIO', syncing: 'Synchroniseren…', syncAll: 'Alles vernieuwen', address: 'adres', addresses: 'adressen', showCards: 'Kaarten tonen', hideCards: 'Kaarten verbergen', liveAssets: 'Live activa', selectedAddress: 'GESELECTEERD ADRES', showDust: 'Dust tonen', hideDust: 'Dust verbergen', organize: 'ORGANISEER JE VOLGLIJST', createAnother: 'Nog een wallet maken', createdWallets: 'Aangemaakte wallets', allocation: 'Portfolioverdeling', allocationEyebrow: 'CRYPTO-MIX', noAllocation: 'Er zijn nog geen activa met prijs beschikbaar voor deze wallet.', settings: 'Instellingen', language: 'Taal', refresh: 'Vernieuwen', footer: 'Alleen-lezen portfolio-inzicht' },
 } as const;
-const FEATURED_SYMBOLS = new Set(['PLS', 'WPLS', 'ETH', 'WETH', 'PLSX', 'HEX', 'pHEX', 'INC', 'PRVX', 'HDRN', 'ICSA', 'PDI', 'PDAI', 'ASIC', 'PDA', 'USDC', 'USDT', 'BTC', 'WBTC']);
+const FEATURED_SYMBOLS = new Set(['PLS', 'WPLS', 'ETH', 'WETH', 'PLSX', 'HEX', 'PHEX', 'INC', 'PRVX', 'HDRN', 'ICSA', 'PDI', 'PDAI', 'ASIC', 'PDA', 'USDC', 'USDT', 'BTC', 'WBTC']);
 const HIDDEN_DUST_SYMBOLS = new Set(['FTVC', 'SCIVVE', 'SCIVVI', 'SCIVVII', 'SCIVV', 'HXY']);
 const WRAPPED_NATIVE: Record<ChainNetwork, string> = {
   PulseChain: '0xA1077a294dDe1B09bB078844Df40758a5D0f9a27',
@@ -467,7 +467,9 @@ function displayAssetSymbol(asset: Asset) {
 }
 function isVerifiedCoreAsset(asset: Asset) {
   if (asset.native) return true;
-  const expectedContract = VERIFIED_TOKEN_CONTRACTS[asset.network]?.[tokenKey(displayAssetSymbol(asset))];
+  const displayKey = tokenKey(displayAssetSymbol(asset));
+  const contractKey = displayKey === 'PHEX' ? 'HEX' : displayKey;
+  const expectedContract = VERIFIED_TOKEN_CONTRACTS[asset.network]?.[contractKey];
   return expectedContract ? assetContract(asset) === expectedContract.toLowerCase() : false;
 }
 function formatUnits(value: string, decimals = 18) {
