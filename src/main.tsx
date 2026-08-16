@@ -1636,6 +1636,9 @@ function editableMetric(value: number, maximumFractionDigits = 8) {
 function editableWholeUnits(value: number) {
   return Number.isFinite(value) ? String(Math.floor(Math.max(0, value))) : '0';
 }
+function wholeUnitInput(value: string) {
+  return value.replace(/,/g, '').split('.')[0].replace(/[^0-9]/g, '');
+}
 
 function HexCalculatorPanel({ open, network, metrics, holding, onToggle, onNetwork, onRefresh }: { open: boolean; network: ChainNetwork; metrics: HexCalculatorMetrics; holding: HexLiquidHolding; onToggle: () => void; onNetwork: (network: ChainNetwork) => void; onRefresh: () => void }) {
   const [amount, setAmount] = useState('0');
@@ -1663,7 +1666,7 @@ function HexCalculatorPanel({ open, network, metrics, holding, onToggle, onNetwo
     {open && <div className="hex-calculator-body">
       <div className="hex-calculator-network" role="group" aria-label="HEX calculator network">{(['Ethereum', 'PulseChain'] as ChainNetwork[]).map(option => <button type="button" key={option} className={network === option ? 'active' : ''} aria-pressed={network === option} onClick={() => onNetwork(option)}>{option}</button>)}</div>
       <div className="hex-calculator-fields">
-        <label><span>HEX to stake</span><input inputMode="numeric" value={formattedAmount} onChange={event => setAmount(event.target.value.replace(/[^0-9]/g, ''))} aria-label="HEX amount to stake"/></label>
+        <label><span>HEX to stake</span><input inputMode="numeric" value={formattedAmount} onChange={event => setAmount(wholeUnitInput(event.target.value))} aria-label="HEX amount to stake"/></label>
         <label><span>Stake length</span><div><input inputMode="decimal" value={duration} onChange={event => setDuration(event.target.value.replace(/[^0-9.]/g, ''))} aria-label="Stake duration"/><select value={unit} onChange={event => setUnit(event.target.value as 'days' | 'months' | 'years')} aria-label="Stake duration unit"><option value="days">Days</option><option value="months">Months</option><option value="years">Years</option></select></div></label>
       </div>
       <div className="hex-calculator-input-value"><span><small>HEX TO STAKE VALUE</small><strong className="hex-dollar-value">{metrics.price ? money(amountHex * metrics.price) : 'Live HEX value unavailable'}</strong></span><span><small>LIQUID {network === 'PulseChain' ? 'pHEX' : 'HEX'} IN SELECTED WALLET</small><strong>{holding.loading ? 'Reading…' : `${compactAmount(String(holding.amount), 2)} ${network === 'PulseChain' ? 'pHEX' : 'HEX'}`}</strong></span></div>
@@ -1702,7 +1705,7 @@ function HexSimulationCalculatorPanel({ open, network, metrics, holding, onToggl
   const cleanNumber = (value: string) => Math.max(0, Number(value.replace(/,/g, '')) || 0);
   const formatInput = (value: string) => { const [whole, fraction] = value.split('.'); return `${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}${fraction !== undefined ? `.${fraction}` : ''}`; };
   const updateNumber = (value: string, setter: (value: string) => void) => { const cleaned = value.replace(/,/g, '').replace(/[^0-9.]/g, ''); const [whole, ...fraction] = cleaned.split('.'); setter(`${whole}${fraction.length ? `.${fraction.join('')}` : ''}`); };
-  const updateWholeNumber = (value: string, setter: (value: string) => void) => setter(value.replace(/[^0-9]/g, ''));
+  const updateWholeNumber = (value: string, setter: (value: string) => void) => setter(wholeUnitInput(value));
   const updateDecimalNumber = (value: string, setter: (value: string) => void) => { const cleaned = value.replace(',', '.').replace(/[^0-9.]/g, ''); const [whole, ...fraction] = cleaned.split('.'); setter(`${whole}${fraction.length ? `.${fraction.join('')}` : ''}`); };
   const amountHex = cleanNumber(amount);
   const durationValue = cleanNumber(duration);
