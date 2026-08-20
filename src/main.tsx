@@ -118,19 +118,21 @@ const UI_COPY = {
   es: { hero: '', privateView: 'Cartera privada.', subtitle: 'Sigue tus carteras de PulseChain y Ethereum desde un panel móvil de solo lectura.', noConnection: 'Sin conexión de cartera', noSeed: 'Sin frase semilla', builtFor: 'CREADO PARA EL ECOSISTEMA', addAddress: 'AÑADIR UNA DIRECCIÓN', enterAddress: 'Introduce una dirección pública', privateWatchlist: 'LISTA PRIVADA', trackedWallets: 'Tus carteras seguidas', reveal: 'Mostrar', hide: 'Ocultar', totalPortfolio: 'CARTERA TOTAL', syncing: 'Sincronizando…', syncAll: 'Sincronizar todo', address: 'dirección', addresses: 'direcciones', showCards: 'Mostrar tarjetas', hideCards: 'Ocultar tarjetas', liveAssets: 'Activos en directo', selectedAddress: 'DIRECCIÓN SELECCIONADA', showDust: 'Mostrar polvo', hideDust: 'Ocultar polvo', organize: 'ORGANIZA TU LISTA', createAnother: 'Crear otra cartera', createdWallets: 'Carteras creadas', allocation: 'Distribución de la cartera', allocationEyebrow: 'MEZCLA DE CRIPTOMONEDAS', noAllocation: 'Todavía no hay activos con precio para esta cartera.', settings: 'Ajustes', language: 'Idioma', refresh: 'Actualizar', footer: 'Seguimiento de cartera de solo lectura' },
   nl: { hero: '', privateView: 'Privé walletportfolio.', subtitle: 'Volg je PulseChain- en Ethereum-wallets in één mobiel, alleen-lezen dashboard.', noConnection: 'Geen walletverbinding', noSeed: 'Geen herstelzin', builtFor: 'GEBOUWD VOOR HET ECOSYSTEEM', addAddress: 'ADRES TOEVOEGEN', enterAddress: 'Voer een openbaar adres in', privateWatchlist: 'PRIVÉVOLGLIJST', trackedWallets: 'Je gevolgde wallets', reveal: 'Tonen', hide: 'Verbergen', totalPortfolio: 'TOTALE PORTFOLIO', syncing: 'Synchroniseren…', syncAll: 'Alles vernieuwen', address: 'adres', addresses: 'adressen', showCards: 'Kaarten tonen', hideCards: 'Kaarten verbergen', liveAssets: 'Live activa', selectedAddress: 'GESELECTEERD ADRES', showDust: 'Dust tonen', hideDust: 'Dust verbergen', organize: 'ORGANISEER JE VOLGLIJST', createAnother: 'Nog een wallet maken', createdWallets: 'Aangemaakte wallets', allocation: 'Portfolioverdeling', allocationEyebrow: 'CRYPTO-MIX', noAllocation: 'Er zijn nog geen activa met prijs beschikbaar voor deze wallet.', settings: 'Instellingen', language: 'Taal', refresh: 'Vernieuwen', footer: 'Alleen-lezen portfolio-inzicht' },
 } as const;
-const FEATURED_SYMBOLS = new Set(['PLS', 'WPLS', 'ETH', 'WETH', 'PLSX', 'HEX', 'PHEX', 'INC', 'PRVX', 'HDRN', 'ICSA', 'PDI', 'PDAI', 'ASIC', 'PDA', 'USDC', 'USDT', 'BTC', 'WBTC']);
-const HIDDEN_DUST_SYMBOLS = new Set(['FTVC', 'SCIVVE', 'SCIVVI', 'SCIVVII', 'SCIVV', 'HXY']);
+const FEATURED_SYMBOLS = new Set(['PLS', 'WPLS', 'ETH', 'WETH', 'PLSX', 'HEX', 'PHEX', 'INC', 'PRVX', 'HDRN', 'ICSA', 'PDI', 'PDAI', 'ASIC', 'PDA', 'PLSD', 'USDC', 'USDT', 'BTC', 'WBTC']);
+const HIDDEN_DUST_SYMBOLS = new Set(['FTVC', 'SCIVIVE', 'SCIVVE', 'SCIVVI', 'SCIVVII', 'SCIVV', 'RHPEPE', 'HXY']);
 const WRAPPED_NATIVE: Record<ChainNetwork, string> = {
   PulseChain: '0xA1077a294dDe1B09bB078844Df40758a5D0f9a27',
   Ethereum: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
 };
 const PDAI_ICON_URL = 'https://cdn.dexscreener.com/cms/images/f5d7803513d354423216d2e075a923570577681f0a877bde8e7e3a0f56d0ca1d?width=800&height=800&quality=95&format=auto';
+const PLSD_ICON_URL = 'https://cdn.dexscreener.com/cms/images/77332210fa6e6ffee65eb467aaf3a64c315289a6f6a53a9201a0d1a72548ba6c?width=800&height=800&quality=95&format=auto';
 const VERIFIED_TOKEN_CONTRACTS: Partial<Record<ChainNetwork, Record<string, string>>> = {
   Ethereum: {
     HEX: '0x2B591e99afE9f32eAA6214f7B7629768c40Eeb39',
     WETH: WRAPPED_NATIVE.Ethereum,
     HDRN: '0x3819f64f282bf135d62168C1e513280dAF905e06',
     ICSA: '0xfc4913214444af5c715cc9f7b52655e788a569ed',
+    PLSD: '0x34F0915a5f15a66Eba86F6a58bE1A471FB7836A7',
     USDC: '0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
     USDT: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
     WBTC: '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
@@ -149,6 +151,7 @@ const VERIFIED_TOKEN_CONTRACTS: Partial<Record<ChainNetwork, Record<string, stri
     USDC: '0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
     USDT: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
     PDAI: '0x6B175474E89094C44Da98b954EedeAC495271d0F',
+    PLSD: '0x34F0915a5f15a66Eba86F6a58bE1A471FB7836A7',
   },
 };
 const RPC_URLS: Record<ChainNetwork, string[]> = {
@@ -191,6 +194,7 @@ const CORE_ICONS: Record<string, string> = {
   PDAI: PDAI_ICON_URL,
   PDI: `${import.meta.env.BASE_URL}token-icons/pdi.png`,
   PRVX: `${import.meta.env.BASE_URL}token-icons/prvx.png`,
+  PLSD: PLSD_ICON_URL,
 };
 
 type TokenInfo = {
@@ -456,6 +460,11 @@ function defaultSelectedWalletId() {
 
 function short(address: string) { return `${address.slice(0, 7)}…${address.slice(-5)}`; }
 function tokenKey(symbol: string) { return symbol.toUpperCase().replace(/[^A-Z0-9]/g, ''); }
+function isHiddenDustAsset(asset: Pick<Asset, 'symbol' | 'name'>) {
+  return [asset.symbol, asset.name].map(tokenKey).some(label =>
+    HIDDEN_DUST_SYMBOLS.has(label) || [...HIDDEN_DUST_SYMBOLS].some(dust => label.includes(dust)),
+  );
+}
 function validAddress(value: string) { return /^0x[a-fA-F0-9]{40}$/.test(value.trim()); }
 function networkLabel(network: Network) { return network === 'Both' ? 'PulseChain + Ethereum' : network; }
 function assetContract(asset: Asset) { return asset.id.replace(/^(PulseChain|Ethereum):/, '').toLowerCase(); }
@@ -2136,10 +2145,8 @@ function App() {
   const selectedAssets = ensureUsdcAssets(selectedPortfolio?.assets ?? [], network);
   const filteredAssets = selectedAssets.filter(asset => {
     const symbol = tokenKey(asset.symbol);
-    const name = tokenKey(asset.name);
-    const isDust = HIDDEN_DUST_SYMBOLS.has(symbol) || [...HIDDEN_DUST_SYMBOLS].some(dust => symbol.includes(dust) || name.includes(dust));
     if (!hideDust) return true;
-    if (isDust) return false;
+    if (isHiddenDustAsset(asset)) return false;
     const verifiedContract = VERIFIED_TOKEN_CONTRACTS[asset.network]?.[symbol];
     if (verifiedContract && !isVerifiedCoreAsset(asset)) return false;
     return isVerifiedCoreAsset(asset) || FEATURED_SYMBOLS.has(symbol) || (asset.value !== null && asset.value >= 0.01);
