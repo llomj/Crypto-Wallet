@@ -178,6 +178,7 @@ const CORE_ICONS: Record<string, string> = {
   PLS: `${import.meta.env.BASE_URL}token-icons/pls.png`,
   WPLS: `${import.meta.env.BASE_URL}token-icons/pls.png`,
   PLSX: `${import.meta.env.BASE_URL}token-icons/plsx.png`,
+  WPLSX: `${import.meta.env.BASE_URL}token-icons/plsx.png`,
   HEX: `${import.meta.env.BASE_URL}token-icons/hex.png`,
   CHEX: `${import.meta.env.BASE_URL}token-icons/hex.png`,
   INC: `${import.meta.env.BASE_URL}token-icons/inc.png`,
